@@ -14,7 +14,9 @@ type Args struct {
 func run() error {
 	var args Args
 	arg.MustParse(&args)
-	files, err := traverse.Traverse(args.Dir)
+	files, err := traverse.Traverse(args.Dir, func(err error) {
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err.Error())
+	})
 	if err != nil {
 		return err
 	}

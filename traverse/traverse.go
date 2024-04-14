@@ -1,8 +1,6 @@
+// Package traverse traverses a file system in multiple concurrent
+// goroutines. It is faster than traversing in a single thread.
 package traverse
-
-// This code traverses a file system in multiple concurrent goroutines. It is
-// faster than traversing in a single thread. Adding I/O to print the results
-// slows it down a lot though.
 
 import (
 	"context"
@@ -50,8 +48,8 @@ func getFileInfo(path string, node *FileInfo) error {
 	node.Size = lst.Size()
 	node.Mode = lst.Mode()
 	node.ModTime = lst.ModTime()
-	st, ok := lst.Sys().(syscall.Stat_t)
-	if ok {
+	st, ok := lst.Sys().(*syscall.Stat_t)
+	if ok && st != nil {
 		node.Uid = st.Uid
 		node.Gid = st.Gid
 	}
@@ -67,9 +65,6 @@ func getFileInfo(path string, node *FileInfo) error {
 			return fmt.Errorf("read dir %s: %w", path, err)
 		}
 		for _, e := range entries {
-			if e.Name() == "." || e.Name() == ".." {
-				continue
-			}
 			node.Children = append(node.Children, &FileInfo{Name: e.Name()})
 		}
 	}
@@ -129,7 +124,10 @@ func (tr *traverser) traverse(root string, node *FileInfo) {
 	}
 }
 
-func Traverse(root string) (*FileInfo, error) {
+// Traverse traverses a file system starting from to given path and returns a
+// FileInfo, which represents a tree of the file system. Call the Traverse method
+// on the resulting FileInfo to walk through all the items.
+func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 	numWorkers := 5 * runtime.NumCPU()
 	tr := &traverser{
 		errChan:  make(chan error, numWorkers),
@@ -149,7 +147,7 @@ func Traverse(root string) (*FileInfo, error) {
 	go func() {
 		defer close(errWait)
 		for e := range tr.errChan {
-			_, _ = fmt.Fprintln(os.Stderr, e.Error())
+			errFn(e)
 		}
 	}()
 
