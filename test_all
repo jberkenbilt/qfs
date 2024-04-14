@@ -1,0 +1,17 @@
+#!/bin/bash
+set -eo pipefail
+cd $(dirname $0)
+rm -rf coverage
+mkdir coverage
+failures=0
+echo '*** test ***'
+if ! go test -v -coverpkg=./... -coverprofile=coverage/coverage.cov ./... -args ${1+"$@"}; then
+    failures=1
+fi
+go tool cover -html=coverage/coverage.cov -o coverage/coverage.html
+echo "Check coverage results coverage/coverage.html"
+if [[ $failures == 1 ]]; then
+    echo "Some tests failed"
+    exit 2
+fi
+echo "All tests passed or were skipped."
