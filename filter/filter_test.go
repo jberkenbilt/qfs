@@ -37,7 +37,7 @@ func TestFilter(t *testing.T) {
 		t.Error(err.Error())
 	}
 	err = f.SetJunk("oops")
-	if err == nil || !strings.HasPrefix(err.Error(), "setJunk may only be called once") {
+	if err == nil || !strings.HasPrefix(err.Error(), "only one junk directive allowed") {
 		t.Errorf("wrong error: %v", err)
 	}
 	check("one/two/three~", false, true, false)

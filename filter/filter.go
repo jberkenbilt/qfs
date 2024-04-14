@@ -1,10 +1,13 @@
 package filter
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 type filterGroup struct {
@@ -54,6 +57,9 @@ func (f *Filter) AddBase(g Group, val string) {
 }
 
 func (f *Filter) AddPattern(g Group, val string) error {
+	if val == "" {
+		return fmt.Errorf("empty pattern not allowed")
+	}
 	re, err := regexp.Compile(val)
 	if err != nil {
 		return fmt.Errorf("regexp error on %s: %w", val, err)
@@ -64,7 +70,10 @@ func (f *Filter) AddPattern(g Group, val string) error {
 
 func (f *Filter) SetJunk(val string) error {
 	if f.junk != nil {
-		return errors.New("setJunk may only be called once")
+		return errors.New("only one junk directive allowed per filter (including nested)")
+	}
+	if val == "" {
+		return fmt.Errorf("empty pattern not allowed")
 	}
 	re, err := regexp.Compile(val)
 	if err != nil {
@@ -136,4 +145,115 @@ func (f *Filter) IsIncluded(path string) (included bool, junk bool) {
 		}
 	}
 	return f.defaultInclude, false
+}
+
+func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
+	const (
+		kwdPrune   = ":prune:"
+		kwdInclude = ":include:"
+		kwdExclude = ":exclude:"
+		prefixRead = ":read:"
+		prefixJunk = ":junk:"
+		prefixRe   = ":re:"
+		prefixBase = "*/"
+		prefixExt  = "*."
+	)
+	const (
+		stTop = iota
+		stGroup
+		stIgnore
+	)
+	r, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filename, err)
+	}
+	defer func() { _ = r.Close() }()
+	scanner := bufio.NewScanner(r)
+	scanner.Split(bufio.ScanLines)
+	state := stTop
+	var group Group
+	lineNo := 0
+	if pruneOnly {
+		f.SetDefaultInclude(true)
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineNo++
+		if strings.HasPrefix(line, "#") {
+			// # is a comment character only at the beginning of the line
+			continue
+		}
+		// If someone wants to end a file with a space on purpose, they can use a pattern
+		// and wrap it in parentheses.
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		switch {
+		case line == kwdPrune:
+			state = stGroup
+			group = Prune
+		case line == kwdInclude:
+			if pruneOnly {
+				state = stIgnore
+			} else {
+				state = stGroup
+				group = Include
+			}
+		case line == kwdExclude:
+			if pruneOnly {
+				state = stIgnore
+			} else {
+				state = stGroup
+				group = Exclude
+			}
+		case strings.HasPrefix(line, prefixRead):
+			toRead := line[len(prefixRead):]
+			err := func() error {
+				return f.ReadFile(toRead, pruneOnly)
+			}()
+			if err != nil {
+				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+			}
+		case strings.HasPrefix(line, prefixJunk):
+			if err := f.SetJunk(line[len(prefixJunk):]); err != nil {
+				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+			}
+			state = stTop
+		default:
+			if state == stIgnore {
+				continue
+			} else if state != stGroup {
+				return fmt.Errorf("%s:%d: path not expected here", filename, lineNo)
+			}
+			switch {
+			case line == ".":
+				if group == Exclude {
+					f.SetDefaultInclude(false)
+				} else if group == Include {
+					f.SetDefaultInclude(true)
+				} else {
+					return fmt.Errorf(
+						"%s:%d: default path directive only allowed in include or exclude",
+						filename,
+						lineNo,
+					)
+				}
+			case strings.HasPrefix(line, prefixRe):
+				if err := f.AddPattern(group, line[len(prefixRe):]); err != nil {
+					return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+				}
+			case strings.HasPrefix(line, prefixBase):
+				f.AddBase(group, line[len(prefixBase):])
+			case strings.HasPrefix(line, prefixExt):
+				if err := f.AddPattern(group, regexp.QuoteMeta("."+line[len(prefixExt):])+`$`); err != nil {
+					// Testing note: no way to actually get an error here...
+					return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+				}
+			default:
+				f.AddPath(group, line)
+			}
+		}
+	}
+	return nil
 }

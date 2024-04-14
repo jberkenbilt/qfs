@@ -1,0 +1,29 @@
+# This is a comment
+
+:include:
+one/two
+three/four
+
+:exclude:
+one/two/three
+*/no-offsite
+*.swp
+
+:include:
+one/two/three/four
+
+:prune:
+*/no-sync
+
+:junk:^\.?#|~$
+
+:read:testdata/filter2
+
+:include:
+.
+*/RCS
+
+:prune:
+prune/this
+# duplicate is ignored
+prune/this
