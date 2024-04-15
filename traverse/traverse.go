@@ -160,8 +160,8 @@ func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 	return tree, nil
 }
 
-// Traverse traverses the FileInfo and calls the function for each item.
-func (f *FileInfo) Traverse(fn func(path string, f *FileInfo)) {
+// Flatten traverses the FileInfo and calls the function for each item in lexical order.
+func (f *FileInfo) Flatten(fn func(path string, f *FileInfo)) {
 	type node struct {
 		path string
 		f    *FileInfo

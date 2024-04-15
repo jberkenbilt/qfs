@@ -20,7 +20,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	files.Traverse(func(path string, f *traverse.FileInfo) {
+	files.Flatten(func(path string, f *traverse.FileInfo) {
 		fmt.Printf("%v %v %v %o4o\n", path, f.ModTime.UnixMicro(), f.Size, f.Mode&0o7777)
 
 	})

@@ -69,7 +69,7 @@ func TestTraverse(t *testing.T) {
 	fn := func(path string, f *traverse.FileInfo) {
 		all[path] = f
 	}
-	files.Traverse(fn)
+	files.Flatten(fn)
 	keys := maps.Keys(all)
 	sort.Strings(keys)
 	expKeys := []string{
@@ -93,7 +93,7 @@ func TestTraverse(t *testing.T) {
 		t.Error("wrong size for moo")
 	}
 	if time.Since(all["potato"].ModTime) > time.Second {
-		t.Error("modtime is broken")
+		t.Error("mod time is broken")
 	}
 	if !(all["potato"].Uid == uid && all["potato"].Gid == gid) {
 		t.Errorf("uid/gid are broken: %#v", all["potato"])
