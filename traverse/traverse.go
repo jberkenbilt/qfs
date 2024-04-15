@@ -19,14 +19,18 @@ import (
 )
 
 type FileInfo struct {
-	Path     string
-	Size     int64
-	ModTime  time.Time
-	Mode     os.FileMode
-	Uid      uint32
-	Gid      uint32
-	Target   string
-	Children []*FileInfo
+	Path      string
+	Size      int64
+	ModTime   time.Time
+	Mode      os.FileMode
+	UMode     uint32
+	Uid       uint32
+	Gid       uint32
+	Major     uint32
+	Minor     uint32
+	LinkCount uint64
+	Target    string
+	Children  []*FileInfo
 }
 
 type traverser struct {
@@ -51,6 +55,10 @@ func getFileInfo(top string, node *FileInfo) error {
 	if ok && st != nil {
 		node.Uid = st.Uid
 		node.Gid = st.Gid
+		node.UMode = st.Mode
+		node.Major = uint32(st.Rdev >> 8 & 0xfff)
+		node.Minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
+		node.LinkCount = st.Nlink
 	}
 	if node.Mode&fs.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
@@ -155,18 +163,23 @@ func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 	return tree, nil
 }
 
-// Flatten traverses the FileInfo and calls the function for each item in lexical order.
-func (f *FileInfo) Flatten(fn func(f *FileInfo)) {
+// Flatten traverses the FileInfo and calls the function for each item in lexical
+// order. If the function returns an error, traversal is stopped, and the error
+// is returned.
+func (f *FileInfo) Flatten(fn func(f *FileInfo) error) error {
 	q := list.New()
 	q.PushFront(f)
 	for q.Len() > 0 {
 		front := q.Front()
 		q.Remove(front)
 		cur := front.Value.(*FileInfo)
-		fn(cur)
+		if err := fn(cur); err != nil {
+			return err
+		}
 		n := len(cur.Children)
 		for i := range cur.Children {
 			q.PushFront(cur.Children[n-i-1])
 		}
 	}
+	return nil
 }

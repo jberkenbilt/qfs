@@ -66,11 +66,12 @@ func TestTraverse(t *testing.T) {
 	}
 	all := map[string]*traverse.FileInfo{}
 	var keys []string
-	fn := func(f *traverse.FileInfo) {
+	fn := func(f *traverse.FileInfo) error {
 		all[f.Path] = f
 		keys = append(keys, f.Path)
+		return nil
 	}
-	files.Flatten(fn)
+	_ = files.Flatten(fn)
 	expKeys := []string{
 		".",
 		"potato",

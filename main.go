@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/alexflint/go-arg"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/traverse"
 	"os"
 )
@@ -20,10 +21,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	files.Flatten(func(f *traverse.FileInfo) {
-		fmt.Printf("%v %v %v %04o\n", f.Path, f.ModTime.Unix(), f.Size, f.Mode&0o7777)
-	})
-	return err
+	return database.WriteQSyncDb(os.Stdout, files)
 }
 
 func main() {
