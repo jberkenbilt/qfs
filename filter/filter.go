@@ -19,10 +19,18 @@ type filterGroup struct {
 type Group int
 
 // The number of groups must equal the size of the groups slice created in New.
+// These constants are indexes into groups.
 const (
 	Include Group = iota
 	Exclude
 	Prune
+)
+
+// These constants are sentinels used/returned by filter status logic.
+const (
+	NoGroup Group = -1 - iota
+	Junk
+	Default
 )
 
 func newFilterGroup() *filterGroup {
@@ -102,7 +110,7 @@ func (fg *filterGroup) match(path string, base string) bool {
 	return false
 }
 
-func (f *Filter) IsIncluded(path string) (included bool, junk bool) {
+func (f *Filter) IsIncluded(path string) (included bool, group Group) {
 	// Iterate on the path, starting at the path and going up the directory
 	// hierarchy, until there is a conclusive result. If none, use the default for
 	// the filter. We check junk and prune all the way up first, then include and
@@ -120,10 +128,10 @@ func (f *Filter) IsIncluded(path string) (included bool, junk bool) {
 	for {
 		base := filepath.Base(cur)
 		if f.groups[Prune].match(cur, base) {
-			return false, false
+			return false, Prune
 		}
 		if f.junk != nil && f.junk.MatchString(base) {
-			return false, true
+			return false, Junk
 		}
 		cur = filepath.Dir(cur)
 		if cur == "." {
@@ -134,17 +142,17 @@ func (f *Filter) IsIncluded(path string) (included bool, junk bool) {
 	for {
 		base := filepath.Base(cur)
 		if f.groups[Include].match(cur, base) {
-			return true, false
+			return true, Include
 		}
 		if f.groups[Exclude].match(cur, base) {
-			return false, false
+			return false, Exclude
 		}
 		cur = filepath.Dir(cur)
 		if cur == "." {
 			break
 		}
 	}
-	return f.defaultInclude, false
+	return f.defaultInclude, Default
 }
 
 func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
@@ -171,7 +179,7 @@ func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanLines)
 	state := stTop
-	var group Group
+	group := NoGroup
 	lineNo := 0
 	if pruneOnly {
 		f.SetDefaultInclude(true)

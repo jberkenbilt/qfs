@@ -8,26 +8,26 @@ import (
 
 func TestFilter(t *testing.T) {
 	f := filter.New()
-	check := func(p string, expIncluded, expJunk, byDefault bool) {
+	check := func(p string, expIncluded bool, expGroup filter.Group) {
 		t.Helper()
 		f.SetDefaultInclude(false)
-		included, junk := f.IsIncluded(p)
+		included, group := f.IsIncluded(p)
 		if included != expIncluded {
 			t.Errorf("%s: included = %v, wanted = %v", p, included, expIncluded)
 		}
-		if junk != expJunk {
-			t.Errorf("%s: junk = %v, wanted = %v", p, junk, expJunk)
+		if group != expGroup {
+			t.Errorf("%s: group = %v, wanted = %v", p, group, expGroup)
 		}
 		f.SetDefaultInclude(true)
-		newIncluded, newJunk := f.IsIncluded(p)
-		if junk != newJunk {
+		newIncluded, newGroup := f.IsIncluded(p)
+		if group != newGroup {
 			t.Errorf("%s: junk changed when default changed", p)
 		}
-		if (newIncluded != included) != byDefault {
+		if (newIncluded != included) != (group == filter.Default) {
 			t.Errorf("%s: unexpected default status", p)
 		}
 	}
-	check("a/b/c", false, false, true)
+	check("a/b/c", false, filter.Default)
 	err := f.SetJunk(`???*`)
 	if err == nil || !strings.HasPrefix(err.Error(), "regexp error on ???*:") {
 		t.Errorf("wrong error: %v", err)
@@ -40,10 +40,10 @@ func TestFilter(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "only one junk directive allowed") {
 		t.Errorf("wrong error: %v", err)
 	}
-	check("one/two/three~", false, true, false)
-	check("one/two/#three", false, true, false)
-	check("one/two/.#three", false, true, false)
-	check("one/two/three.#four~five", false, false, true)
+	check("one/two/three~", false, filter.Junk)
+	check("one/two/#three", false, filter.Junk)
+	check("one/two/.#three", false, filter.Junk)
+	check("one/two/three.#four~five", false, filter.Default)
 
 	addPattern := func(g filter.Group, v string) {
 		t.Helper()
@@ -65,16 +65,16 @@ func TestFilter(t *testing.T) {
 	f.AddBase(filter.Include, "RCS")
 	f.AddBase(filter.Exclude, "always-exclude")
 	addPattern(filter.Include, ",v$")
-	check("one/exclude/include/yes", true, false, false)
-	check("one/exclude/nope/anything", false, false, false)
-	check("one/exclude/something/RCS/yes", true, false, false)
-	check("one/prune/include/nope", false, false, false)
-	check("one/prune/RCS/a,v", false, false, false)
-	check("a/no-sync/something", false, false, false)
-	check("a/always-exclude/something/a,v", true, false, false)
-	check("a/always-exclude/something/else", false, false, false)
-	check("a/always-exclude/RCS/yes", true, false, false)
-	check("a/potato/salad/default", false, false, true)
+	check("one/exclude/include/yes", true, filter.Include)
+	check("one/exclude/nope/anything", false, filter.Exclude)
+	check("one/exclude/something/RCS/yes", true, filter.Include)
+	check("one/prune/include/nope", false, filter.Prune)
+	check("one/prune/RCS/a,v", false, filter.Prune)
+	check("a/no-sync/something", false, filter.Prune)
+	check("a/always-exclude/something/a,v", true, filter.Include)
+	check("a/always-exclude/something/else", false, filter.Exclude)
+	check("a/always-exclude/RCS/yes", true, filter.Include)
+	check("a/potato/salad/default", false, filter.Default)
 
 	gotPanic := ""
 	func() {
