@@ -20,9 +20,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	files.Flatten(func(path string, f *traverse.FileInfo) {
-		fmt.Printf("%v %v %v %o4o\n", path, f.ModTime.UnixMicro(), f.Size, f.Mode&0o7777)
-
+	files.Flatten(func(f *traverse.FileInfo) {
+		fmt.Printf("%v %v %v %04o\n", f.Path, f.ModTime.Unix(), f.Size, f.Mode&0o7777)
 	})
 	return err
 }

@@ -3,7 +3,6 @@ package traverse_test
 import (
 	"errors"
 	"github.com/jberkenbilt/qfs/traverse"
-	"golang.org/x/exp/maps"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -66,12 +65,12 @@ func TestTraverse(t *testing.T) {
 		t.Errorf(errors.Join(allErrors...).Error())
 	}
 	all := map[string]*traverse.FileInfo{}
-	fn := func(path string, f *traverse.FileInfo) {
-		all[path] = f
+	var keys []string
+	fn := func(f *traverse.FileInfo) {
+		all[f.Path] = f
+		keys = append(keys, f.Path)
 	}
 	files.Flatten(fn)
-	keys := maps.Keys(all)
-	sort.Strings(keys)
 	expKeys := []string{
 		".",
 		"potato",

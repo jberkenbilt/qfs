@@ -3,6 +3,7 @@
 package traverse
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"github.com/jberkenbilt/qfs/queue"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -17,7 +19,7 @@ import (
 )
 
 type FileInfo struct {
-	Name     string
+	Path     string
 	Size     int64
 	ModTime  time.Time
 	Mode     os.FileMode
@@ -28,19 +30,16 @@ type FileInfo struct {
 }
 
 type traverser struct {
+	root     string
 	errChan  chan error
-	workChan chan *request
+	workChan chan *FileInfo
 	pending  atomic.Int64
 	zero     chan struct{}
-	q        *queue.Queue[*request]
+	q        *queue.Queue[*FileInfo]
 }
 
-type request struct {
-	path string
-	node *FileInfo
-}
-
-func getFileInfo(path string, node *FileInfo) error {
+func getFileInfo(top string, node *FileInfo) error {
+	path := filepath.Join(top, node.Path)
 	lst, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("lstat %s: %w", path, err)
@@ -64,24 +63,24 @@ func getFileInfo(path string, node *FileInfo) error {
 		if err != nil {
 			return fmt.Errorf("read dir %s: %w", path, err)
 		}
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Name() < entries[j].Name()
+		})
 		for _, e := range entries {
-			node.Children = append(node.Children, &FileInfo{Name: e.Name()})
+			node.Children = append(node.Children, &FileInfo{Path: filepath.Join(node.Path, e.Name())})
 		}
 	}
 	return nil
 }
 
 func (tr *traverser) worker() {
-	for req := range tr.workChan {
-		if err := getFileInfo(req.path, req.node); err != nil {
+	for node := range tr.workChan {
+		if err := getFileInfo(tr.root, node); err != nil {
 			tr.errChan <- err
 		}
-		var toAdd []*request
-		for _, c := range req.node.Children {
-			toAdd = append(toAdd, &request{
-				path: req.path + "/" + c.Name,
-				node: c,
-			})
+		var toAdd []*FileInfo
+		for _, c := range node.Children {
+			toAdd = append(toAdd, c)
 		}
 		tr.q.Push(toAdd...)
 		if tr.pending.Add(int64(len(toAdd))-1) == 0 {
@@ -93,10 +92,10 @@ func (tr *traverser) worker() {
 	}
 }
 
-func (tr *traverser) getWork() []*request {
+func (tr *traverser) getWork() []*FileInfo {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := make(chan []*request, 1)
+	c := make(chan []*FileInfo, 1)
 	go func() {
 		c <- tr.q.GetAll(ctx)
 	}()
@@ -108,13 +107,8 @@ func (tr *traverser) getWork() []*request {
 	}
 }
 
-func (tr *traverser) traverse(root string, node *FileInfo) {
-	toDo := []*request{
-		{
-			path: root,
-			node: node,
-		},
-	}
+func (tr *traverser) traverse(node *FileInfo) {
+	toDo := []*FileInfo{node}
 	tr.pending.Add(1)
 	for toDo != nil {
 		for _, r := range toDo {
@@ -130,10 +124,11 @@ func (tr *traverser) traverse(root string, node *FileInfo) {
 func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 	numWorkers := 5 * runtime.NumCPU()
 	tr := &traverser{
+		root:     root,
 		errChan:  make(chan error, numWorkers),
-		workChan: make(chan *request, numWorkers),
+		workChan: make(chan *FileInfo, numWorkers),
 		zero:     make(chan struct{}, 1),
-		q:        queue.New[*request](),
+		q:        queue.New[*FileInfo](),
 	}
 	var workerWait sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
@@ -151,8 +146,8 @@ func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 		}
 	}()
 
-	tree := &FileInfo{Name: "."}
-	tr.traverse(root, tree)
+	tree := &FileInfo{Path: "."}
+	tr.traverse(tree)
 	close(tr.workChan)
 	workerWait.Wait()
 	close(tr.errChan)
@@ -161,28 +156,17 @@ func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 }
 
 // Flatten traverses the FileInfo and calls the function for each item in lexical order.
-func (f *FileInfo) Flatten(fn func(path string, f *FileInfo)) {
-	type node struct {
-		path string
-		f    *FileInfo
-	}
-	q := []node{
-		{
-			path: ".",
-			f:    f,
-		},
-	}
-	i := 0
-	for i < len(q) {
-		cur := q[i]
-		path := filepath.Join(cur.path, cur.f.Name)
-		fn(path, cur.f)
-		for _, child := range cur.f.Children {
-			q = append(q, node{
-				path: path,
-				f:    child,
-			})
+func (f *FileInfo) Flatten(fn func(f *FileInfo)) {
+	q := list.New()
+	q.PushFront(f)
+	for q.Len() > 0 {
+		front := q.Front()
+		q.Remove(front)
+		cur := front.Value.(*FileInfo)
+		fn(cur)
+		n := len(cur.Children)
+		for i := range cur.Children {
+			q.PushFront(cur.Children[n-i-1])
 		}
-		i++
 	}
 }
