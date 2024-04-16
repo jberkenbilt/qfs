@@ -5,10 +5,19 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/traverse"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 )
+
+type Entry struct {
+	FileType    traverse.FileType
+	ModTime     int64 // milliseconds
+	Size        int64
+	Permissions uint16
+	Uid         uint32
+	Gid         uint32
+	Special     string
+}
 
 func commonPrefix(b1 []byte, b2 []byte) int {
 	n := min(len(b1), len(b2))
@@ -20,67 +29,66 @@ func commonPrefix(b1 []byte, b2 []byte) int {
 	return n
 }
 
-func WriteQSyncDb(rawW io.Writer, files *traverse.FileInfo) error {
+func fileInfoToEntry(f *traverse.FileInfo) *Entry {
+	var special string
+	if f.FileType == traverse.TypeLink {
+		special = f.Target
+	} else if f.FileType == traverse.TypeBlockDev || f.FileType == traverse.TypeCharDev {
+		special = fmt.Sprintf("%d,%d", f.Major, f.Minor)
+	}
+	return &Entry{
+		FileType:    f.FileType,
+		ModTime:     f.ModTime.UnixMilli(),
+		Size:        f.Size,
+		Permissions: f.Permissions,
+		Uid:         f.Uid,
+		Gid:         f.Gid,
+		Special:     special,
+	}
+}
+
+func newOrEmpty[T comparable](first bool, old *T, new T, s string) string {
+	if first || *old != new {
+		*old = new
+		return s
+	}
+	return ""
+}
+
+func WriteDb(rawW io.Writer, files *traverse.FileInfo) error {
 	w := bufio.NewWriter(rawW)
 	defer func() { _ = w.Flush() }()
-	if _, err := w.WriteString("SYNC_TOOLS_DB_VERSION 3\n"); err != nil {
+	if _, err := w.WriteString("QFS 1\n"); err != nil {
 		return err
 	}
 	var lastLine []byte
-	var lastMode int64
-	var lastUid int64 = -1
-	var lastGid int64 = -1
-	var lastLinkCount int64 = -1
-	newOrEmpty := func(old *int64, new int64, s string) string {
-		if *old == new {
-			return ""
-		} else {
-			*old = new
-		}
-		return s
-	}
+	var lastMode uint16
+	var lastUid uint32
+	var lastGid uint32
+	first := true
 	err := files.Flatten(func(f *traverse.FileInfo) error {
-		mode := newOrEmpty(&lastMode, int64(f.UMode), fmt.Sprintf("0%o", f.UMode))
-		uid := newOrEmpty(&lastUid, int64(f.Uid), strconv.FormatInt(int64(f.Uid), 10))
-		gid := newOrEmpty(&lastGid, int64(f.Gid), strconv.FormatInt(int64(f.Gid), 10))
-		linkCount := newOrEmpty(&lastLinkCount, int64(f.LinkCount), strconv.FormatInt(int64(f.LinkCount), 10))
-		size := f.Size
-		var special string
-		if f.Mode.IsDir() {
-			special = strconv.Itoa(len(f.Children))
-			size = 0
-		} else if f.Mode.Type() == os.ModeSymlink {
-			special = f.Target
-		} else if f.Mode.Type()&os.ModeDevice != 0 {
-			if f.Mode.Type()&os.ModeCharDevice != 0 {
-				special = fmt.Sprintf("c,%d,%d", f.Major, f.Minor)
-			} else {
-				special = fmt.Sprintf("b,%d,%d", f.Major, f.Minor)
-			}
-		}
-		path := f.Path
-		if path != "." {
-			// Add leading ./ for compatibility with v1
-			path = "./" + f.Path
-		}
-		line := []byte(fmt.Sprintf(strings.Join([]string{
-			path,
-			strconv.FormatInt(f.ModTime.Unix(), 10),
-			strconv.FormatInt(size, 10),
+		e := fileInfoToEntry(f)
+		mode := newOrEmpty(first, &lastMode, e.Permissions, fmt.Sprintf("0%o", e.Permissions))
+		uid := newOrEmpty(first, &lastUid, e.Uid, strconv.FormatInt(int64(e.Uid), 10))
+		gid := newOrEmpty(first, &lastGid, e.Gid, strconv.FormatInt(int64(e.Gid), 10))
+		first = false
+		line := []byte(strings.Join([]string{
+			f.Path,
+			string(e.FileType),
+			strconv.FormatInt(e.ModTime, 10),
+			strconv.FormatInt(e.Size, 10),
 			mode,
 			uid,
 			gid,
-			linkCount,
-			special,
-			"",
-		}, "\x00")))
+			e.Special,
+		}, "\x00"))
 		same := commonPrefix(lastLine, line)
 		lastLine = line
 		var sameStr string
 		if same > 0 {
 			sameStr = fmt.Sprintf("/%d", same)
 		}
-		_, err := w.WriteString(fmt.Sprintf("\x00%d%s\x00%s\n", len(line)-same, sameStr, line[same:]))
+		_, err := w.WriteString(fmt.Sprintf("%d%s\x00%s\n", len(line)-same, sameStr, line[same:]))
 		if err != nil {
 			return err
 		}

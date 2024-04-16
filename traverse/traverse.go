@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/jberkenbilt/qfs/queue"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,19 +17,31 @@ import (
 	"time"
 )
 
+type FileType rune
+
+const (
+	TypeFile      FileType = 'f'
+	TypeDirectory FileType = 'd'
+	TypeLink      FileType = 'l'
+	TypeCharDev   FileType = 'c'
+	TypeBlockDev  FileType = 'b'
+	TypePipe      FileType = 'p'
+	TypeSocket    FileType = 's'
+	TypeUnknown   FileType = 'x'
+)
+
 type FileInfo struct {
-	Path      string
-	Size      int64
-	ModTime   time.Time
-	Mode      os.FileMode
-	UMode     uint32
-	Uid       uint32
-	Gid       uint32
-	Major     uint32
-	Minor     uint32
-	LinkCount uint64
-	Target    string
-	Children  []*FileInfo
+	Path        string
+	FileType    FileType
+	ModTime     time.Time
+	Size        int64
+	Permissions uint16
+	Uid         uint32
+	Gid         uint32
+	Target      string
+	Major       uint32
+	Minor       uint32
+	Children    []*FileInfo
 }
 
 type traverser struct {
@@ -48,25 +59,40 @@ func getFileInfo(top string, node *FileInfo) error {
 	if err != nil {
 		return fmt.Errorf("lstat %s: %w", path, err)
 	}
-	node.Size = lst.Size()
-	node.Mode = lst.Mode()
 	node.ModTime = lst.ModTime()
+	mode := lst.Mode()
+	node.Permissions = uint16(mode.Perm())
 	st, ok := lst.Sys().(*syscall.Stat_t)
 	if ok && st != nil {
 		node.Uid = st.Uid
 		node.Gid = st.Gid
-		node.UMode = st.Mode
 		node.Major = uint32(st.Rdev >> 8 & 0xfff)
 		node.Minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
-		node.LinkCount = st.Nlink
 	}
-	if node.Mode&fs.ModeSymlink != 0 {
+	modeType := mode.Type()
+	switch {
+	case mode.IsRegular():
+		node.FileType = TypeFile
+		node.Size = lst.Size()
+	case modeType&os.ModeDevice != 0:
+		if modeType&os.ModeCharDevice != 0 {
+			node.FileType = TypeCharDev
+		} else {
+			node.FileType = TypeBlockDev
+		}
+	case modeType&os.ModeSocket != 0:
+		node.FileType = TypeSocket
+	case modeType&os.ModeNamedPipe != 0:
+		node.FileType = TypePipe
+	case modeType&os.ModeSymlink != 0:
+		node.FileType = TypeLink
 		target, err := os.Readlink(path)
 		if err != nil {
 			return fmt.Errorf("readlink %s: %w", path, err)
 		}
 		node.Target = target
-	} else if node.Mode.IsDir() {
+	case mode.IsDir():
+		node.FileType = TypeDirectory
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("read dir %s: %w", path, err)
@@ -77,6 +103,9 @@ func getFileInfo(top string, node *FileInfo) error {
 		for _, e := range entries {
 			node.Children = append(node.Children, &FileInfo{Path: filepath.Join(node.Path, e.Name())})
 		}
+	default:
+		// Not possible to exercise in test suite
+		node.FileType = TypeUnknown
 	}
 	return nil
 }
@@ -86,12 +115,8 @@ func (tr *traverser) worker() {
 		if err := getFileInfo(tr.root, node); err != nil {
 			tr.errChan <- err
 		}
-		var toAdd []*FileInfo
-		for _, c := range node.Children {
-			toAdd = append(toAdd, c)
-		}
-		tr.q.Push(toAdd...)
-		if tr.pending.Add(int64(len(toAdd))-1) == 0 {
+		tr.q.Push(node.Children...)
+		if tr.pending.Add(int64(len(node.Children))-1) == 0 {
 			select {
 			case tr.zero <- struct{}{}:
 			default:

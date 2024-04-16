@@ -3,6 +3,7 @@ package traverse_test
 import (
 	"errors"
 	"github.com/jberkenbilt/qfs/traverse"
+	"golang.org/x/exp/maps"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -52,6 +53,9 @@ func TestTraverse(t *testing.T) {
 		t.Errorf("mkdir: %v", err)
 	}
 	err = os.WriteFile(filepath.Join(tmp, "one/two/moo"), []byte("oink"), 0644)
+	if err != nil {
+		t.Errorf("write file: %v", err)
+	}
 
 	var allErrors []error
 	errFn := func(err error) {
@@ -111,5 +115,20 @@ func TestTraverse(t *testing.T) {
 		if !strings.HasPrefix(err.Error(), "read dir "+tmp+"/one/two:") {
 			t.Errorf("wrong error: %v", err)
 		}
+	}
+	maps.Clear(all)
+	keys = nil
+	_ = files.Flatten(fn)
+	expKeys = []string{
+		".",
+		"potato",
+		"quack",
+		"baa",
+		"one",
+		"one/two",
+	}
+	sort.Strings(expKeys)
+	if !slices.Equal(expKeys, keys) {
+		t.Errorf("wrong entries: %#v", keys)
 	}
 }

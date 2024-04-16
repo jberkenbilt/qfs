@@ -21,7 +21,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	return database.WriteQSyncDb(os.Stdout, files)
+	return database.WriteDb(os.Stdout, files)
 }
 
 func main() {
