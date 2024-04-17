@@ -2,31 +2,21 @@ package main
 
 import (
 	"fmt"
-	"github.com/alexflint/go-arg"
-	"github.com/jberkenbilt/qfs/database"
-	"github.com/jberkenbilt/qfs/traverse"
+	"github.com/jberkenbilt/qfs/qfs"
 	"os"
 )
 
-type Args struct {
-	Dir string `arg:"required"`
-}
-
 func run() error {
-	var args Args
-	arg.MustParse(&args)
-	files, err := traverse.Traverse(args.Dir, func(err error) {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err.Error())
-	})
+	q, err := qfs.New(qfs.WithCliArgs(os.Args))
 	if err != nil {
 		return err
 	}
-	return database.WriteDb(os.Stdout, files)
+	return q.Run()
 }
 
 func main() {
 	if err := run(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(2)
 	}
 }
