@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/qfs"
 	"os"
+	"path/filepath"
 )
 
 func run() error {
@@ -16,7 +17,7 @@ func run() error {
 
 func main() {
 	if err := run(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err.Error())
+		_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", filepath.Base(os.Args[0]), err)
 		os.Exit(2)
 	}
 }

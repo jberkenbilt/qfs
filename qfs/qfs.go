@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+const Version = "0.0"
+
 type Options func(*Qfs) error
 
 type Qfs struct {
