@@ -33,6 +33,17 @@ const (
 	Default
 )
 
+const (
+	kwdPrune   = ":prune:"
+	kwdInclude = ":include:"
+	kwdExclude = ":exclude:"
+	prefixRead = ":read:"
+	prefixJunk = ":junk:"
+	prefixRe   = ":re:"
+	prefixBase = "*/"
+	prefixExt  = "*."
+)
+
 func newFilterGroup() *filterGroup {
 	return &filterGroup{
 		path: map[string]struct{}{},
@@ -129,7 +140,8 @@ func IsIncluded(path string, filters ...*Filter) (included bool, group Group) {
 		panic("Filter.IsIncluded must be called with a relative path")
 	}
 	if len(filters) == 0 {
-		panic("Filter.IsIncluded must be passed at least one filter")
+		// No filters = include everything.
+		return true, Default
 	}
 
 	base := filepath.Base(path)
@@ -192,17 +204,34 @@ thisFilter:
 	return defaultInclude, Default
 }
 
+func (f *Filter) ReadLine(group Group, line string) error {
+	switch {
+	case line == ".":
+		if group == Exclude {
+			f.SetDefaultInclude(false)
+		} else if group == Include {
+			f.SetDefaultInclude(true)
+		} else {
+			return errors.New("default path directive only allowed in include or exclude")
+		}
+	case strings.HasPrefix(line, prefixRe):
+		if err := f.AddPattern(group, line[len(prefixRe):]); err != nil {
+			return err
+		}
+	case strings.HasPrefix(line, prefixBase):
+		f.AddBase(group, line[len(prefixBase):])
+	case strings.HasPrefix(line, prefixExt):
+		if err := f.AddPattern(group, regexp.QuoteMeta("."+line[len(prefixExt):])+`$`); err != nil {
+			// Testing note: no way to actually get an error here...
+			return err
+		}
+	default:
+		f.AddPath(group, line)
+	}
+	return nil
+}
+
 func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
-	const (
-		kwdPrune   = ":prune:"
-		kwdInclude = ":include:"
-		kwdExclude = ":exclude:"
-		prefixRead = ":read:"
-		prefixJunk = ":junk:"
-		prefixRe   = ":re:"
-		prefixBase = "*/"
-		prefixExt  = "*."
-	)
 	const (
 		stTop = iota
 		stGroup
@@ -271,32 +300,9 @@ func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
 			} else if state != stGroup {
 				return fmt.Errorf("%s:%d: path not expected here", filename, lineNo)
 			}
-			switch {
-			case line == ".":
-				if group == Exclude {
-					f.SetDefaultInclude(false)
-				} else if group == Include {
-					f.SetDefaultInclude(true)
-				} else {
-					return fmt.Errorf(
-						"%s:%d: default path directive only allowed in include or exclude",
-						filename,
-						lineNo,
-					)
-				}
-			case strings.HasPrefix(line, prefixRe):
-				if err := f.AddPattern(group, line[len(prefixRe):]); err != nil {
-					return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
-				}
-			case strings.HasPrefix(line, prefixBase):
-				f.AddBase(group, line[len(prefixBase):])
-			case strings.HasPrefix(line, prefixExt):
-				if err := f.AddPattern(group, regexp.QuoteMeta("."+line[len(prefixExt):])+`$`); err != nil {
-					// Testing note: no way to actually get an error here...
-					return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
-				}
-			default:
-				f.AddPath(group, line)
+			err = f.ReadLine(group, line)
+			if err != nil {
+				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
 			}
 		}
 	}

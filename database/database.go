@@ -1,10 +1,9 @@
 package database
 
 import (
-	"bufio"
 	"fmt"
 	"github.com/jberkenbilt/qfs/traverse"
-	"io"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -55,9 +54,12 @@ func newOrEmpty[T comparable](first bool, old *T, new T, s string) string {
 	return ""
 }
 
-func WriteDb(rawW io.Writer, files *traverse.FileInfo) error {
-	w := bufio.NewWriter(rawW)
-	defer func() { _ = w.Flush() }()
+func WriteDb(filename string, files *traverse.FileInfo) error {
+	w, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create database \"%s\": %w", filename, err)
+	}
+	defer func() { _ = w.Close() }()
 	if _, err := w.WriteString("QFS 1\n"); err != nil {
 		return err
 	}
@@ -66,7 +68,7 @@ func WriteDb(rawW io.Writer, files *traverse.FileInfo) error {
 	var lastUid uint32
 	var lastGid uint32
 	first := true
-	err := files.Flatten(func(f *traverse.FileInfo) error {
+	err = files.Flatten(func(f *traverse.FileInfo) error {
 		e := fileInfoToEntry(f)
 		mode := newOrEmpty(first, &lastMode, e.Permissions, fmt.Sprintf("0%o", e.Permissions))
 		uid := newOrEmpty(first, &lastUid, e.Uid, strconv.FormatInt(int64(e.Uid), 10))
@@ -97,5 +99,5 @@ func WriteDb(rawW io.Writer, files *traverse.FileInfo) error {
 	if err != nil {
 		return err
 	}
-	return w.Flush()
+	return w.Close()
 }

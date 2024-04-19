@@ -61,7 +61,7 @@ func TestTraverse(t *testing.T) {
 	errFn := func(err error) {
 		allErrors = append(allErrors, err)
 	}
-	files, err := traverse.Traverse(tmp, errFn)
+	files, err := traverse.Traverse(tmp, nil, errFn)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -104,7 +104,7 @@ func TestTraverse(t *testing.T) {
 	}
 	_ = os.Chmod(j("one/two"), 0)
 	defer func() { _ = os.Chmod(j("one/two"), 0755) }()
-	files, err = traverse.Traverse(tmp, errFn)
+	files, err = traverse.Traverse(tmp, nil, errFn)
 	if err != nil {
 		t.Errorf("error returned: %v", err)
 	}

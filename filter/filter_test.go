@@ -92,6 +92,12 @@ func TestFilter(t *testing.T) {
 	// not matched by any rule
 	check("a/potato/salad/default", false, filter.Default)
 
+	// No filters = include
+	included, group := filter.IsIncluded("anything")
+	if !(included && group == filter.Default) {
+		t.Errorf("wrong behavior with no filters")
+	}
+
 	gotPanic := ""
 	func() {
 		defer func() {
@@ -100,17 +106,6 @@ func TestFilter(t *testing.T) {
 		_, _ = filter.IsIncluded("/oops", f1)
 	}()
 	if gotPanic != "Filter.IsIncluded must be called with a relative path" {
-		t.Errorf("wrong panic: %s", gotPanic)
-	}
-
-	gotPanic = ""
-	func() {
-		defer func() {
-			gotPanic = recover().(string)
-		}()
-		_, _ = filter.IsIncluded("oops")
-	}()
-	if gotPanic != "Filter.IsIncluded must be passed at least one filter" {
 		t.Errorf("wrong panic: %s", gotPanic)
 	}
 }

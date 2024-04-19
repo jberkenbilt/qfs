@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
 	"os"
 	"path/filepath"
@@ -42,10 +43,12 @@ type FileInfo struct {
 	Major       uint32
 	Minor       uint32
 	Children    []*FileInfo
+	Included    bool
 }
 
 type traverser struct {
 	root     string
+	filters  []*filter.Filter
 	errChan  chan error
 	workChan chan *FileInfo
 	pending  atomic.Int64
@@ -53,8 +56,10 @@ type traverser struct {
 	q        *queue.Queue[*FileInfo]
 }
 
-func getFileInfo(top string, node *FileInfo) error {
-	path := filepath.Join(top, node.Path)
+func (tr *traverser) getFileInfo(node *FileInfo) error {
+	path := filepath.Join(tr.root, node.Path)
+	included, group := filter.IsIncluded(node.Path, tr.filters...)
+	node.Included = included
 	lst, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("lstat %s: %w", path, err)
@@ -92,6 +97,10 @@ func getFileInfo(top string, node *FileInfo) error {
 		}
 		node.Target = target
 	case mode.IsDir():
+		if !included && group == filter.Prune {
+			// Don't traverse into pruned directories
+			break
+		}
 		node.FileType = TypeDirectory
 		entries, err := os.ReadDir(path)
 		if err != nil {
@@ -112,7 +121,7 @@ func getFileInfo(top string, node *FileInfo) error {
 
 func (tr *traverser) worker() {
 	for node := range tr.workChan {
-		if err := getFileInfo(tr.root, node); err != nil {
+		if err := tr.getFileInfo(node); err != nil {
 			tr.errChan <- err
 		}
 		tr.q.Push(node.Children...)
@@ -152,12 +161,17 @@ func (tr *traverser) traverse(node *FileInfo) {
 }
 
 // Traverse traverses a file system starting from to given path and returns a
-// FileInfo, which represents a tree of the file system. Call the Traverse method
-// on the resulting FileInfo to walk through all the items.
-func Traverse(root string, errFn func(error)) (*FileInfo, error) {
+// FileInfo, which represents a tree of the file system. Call the Flatten method
+// on the resulting FileInfo to walk through all the items included by the
+// filters. Note that a specific FileInfo has an Included field indicating
+// whether the item is included. Pruned directories' children are not included,
+// but regular excluded directories are present in case they have included
+// children.
+func Traverse(root string, filters []*filter.Filter, errFn func(error)) (*FileInfo, error) {
 	numWorkers := 5 * runtime.NumCPU()
 	tr := &traverser{
 		root:     root,
+		filters:  filters,
 		errChan:  make(chan error, numWorkers),
 		workChan: make(chan *FileInfo, numWorkers),
 		zero:     make(chan struct{}, 1),
@@ -190,7 +204,7 @@ func Traverse(root string, errFn func(error)) (*FileInfo, error) {
 
 // Flatten traverses the FileInfo and calls the function for each item in lexical
 // order. If the function returns an error, traversal is stopped, and the error
-// is returned.
+// is returned. Items that were excluded by the filter are skipped.
 func (f *FileInfo) Flatten(fn func(f *FileInfo) error) error {
 	q := list.New()
 	q.PushFront(f)
@@ -198,8 +212,10 @@ func (f *FileInfo) Flatten(fn func(f *FileInfo) error) error {
 		front := q.Front()
 		q.Remove(front)
 		cur := front.Value.(*FileInfo)
-		if err := fn(cur); err != nil {
-			return err
+		if cur.Included {
+			if err := fn(cur); err != nil {
+				return err
+			}
 		}
 		n := len(cur.Children)
 		for i := range cur.Children {
