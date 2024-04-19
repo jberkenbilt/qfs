@@ -12,7 +12,7 @@ import (
 
 type filterGroup struct {
 	path    map[string]struct{} // applies to full path
-	base    map[string]struct{} // applies to last path element
+	base    map[string]struct{} // applies to a single path element
 	pattern []*regexp.Regexp    // applies to last path element
 }
 
@@ -21,9 +21,9 @@ type Group int
 // The number of groups must equal the size of the groups slice created in New.
 // These constants are indexes into groups.
 const (
-	Include Group = iota
+	Prune Group = iota
+	Include
 	Exclude
-	Prune
 )
 
 // These constants are sentinels used/returned by filter status logic.
@@ -110,49 +110,86 @@ func (fg *filterGroup) match(path string, base string) bool {
 	return false
 }
 
-func (f *Filter) IsIncluded(path string) (included bool, group Group) {
+// IsIncluded tests whether the path is included by all the given filters. The
+// highest-priority matching group that caused the decision is returned. The
+// groups in decreasing priority are Junk, Prune, Include, Exclude, and Default.
+// Note that Junk applies only to the last path element.
+func IsIncluded(path string, filters ...*Filter) (included bool, group Group) {
 	// Iterate on the path, starting at the path and going up the directory
 	// hierarchy, until there is a conclusive result. If none, use the default for
-	// the filter. We check junk and prune all the way up first, then include and
-	// exclude all the way up. This makes prune and junk strongest, followed by
-	// include, and then exclude. So if you have the path `a/b/c/d`, if `a/b` is
-	// pruned, it will not be considered even if `a/b/c` is included. If `a/b` is
-	// excluded and `a/b/c` is included, `a/b/c` will be considered included, but
-	// `a/b/x` would not. At each point, check explicit matches before patterns.
+	// the filter. We check junk and prune all the way up first for all filters, then
+	// include and exclude all the way up. This makes prune and junk strongest,
+	// followed by include, and then exclude. So if you have the path `a/b/c/d`, if
+	// `a/b` is pruned, it will not be considered even if `a/b/c` is included. If
+	// `a/b` is excluded and `a/b/c` is included, `a/b/c` will be considered
+	// included, but `a/b/x` would not. At each point, check explicit matches before
+	// patterns.
 
 	if filepath.IsAbs(path) {
 		panic("Filter.IsIncluded must be called with a relative path")
 	}
+	if len(filters) == 0 {
+		panic("Filter.IsIncluded must be passed at least one filter")
+	}
 
-	cur := path
-	for {
-		base := filepath.Base(cur)
-		if f.groups[Prune].match(cur, base) {
-			return false, Prune
-		}
+	base := filepath.Base(path)
+	for _, f := range filters {
 		if f.junk != nil && f.junk.MatchString(base) {
 			return false, Junk
 		}
+	}
+
+	// Check prune. Prune is checked at each path level. Nothing can override prune,
+	// so we can return immediately if we get a match.
+	cur := path
+	for { // each path level
+		base = filepath.Base(cur)
+		for _, f := range filters {
+			if f.groups[Prune].match(cur, base) {
+				return false, Prune
+			}
+		}
 		cur = filepath.Dir(cur)
 		if cur == "." {
 			break
 		}
 	}
-	cur = path
-	for {
-		base := filepath.Base(cur)
-		if f.groups[Include].match(cur, base) {
-			return true, Include
+
+	// Check include/exclude. A lower directory include can override a higher
+	// directory exclude, and a path needs to be included by all filters to be
+	// included.
+	includeMatched := false
+	defaultInclude := true
+thisFilter:
+	for _, f := range filters {
+		if !f.defaultInclude {
+			// If any filter has defaultInclude false, that becomes the overall default.
+			defaultInclude = false
 		}
-		if f.groups[Exclude].match(cur, base) {
-			return false, Exclude
-		}
-		cur = filepath.Dir(cur)
-		if cur == "." {
-			break
+		cur = path
+		for {
+			base = filepath.Base(cur)
+			if f.groups[Include].match(cur, base) {
+				// We can stop testing this filter, but the file could still be explicitly
+				// excluded by a later filter.
+				includeMatched = true
+				break thisFilter
+			}
+			if f.groups[Exclude].match(cur, base) {
+				return false, Exclude
+			}
+			cur = filepath.Dir(cur)
+			if cur == "." {
+				break
+			}
 		}
 	}
-	return f.defaultInclude, Default
+	if includeMatched {
+		// This was explicitly included by at least one filter and not explicitly
+		// excluded by any filter.
+		return true, Include
+	}
+	return defaultInclude, Default
 }
 
 func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
