@@ -6,6 +6,7 @@ import (
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
 	"os"
+	"path/filepath"
 )
 
 type Options func(*Scan) error
@@ -69,13 +70,17 @@ func WithStdout(stdout bool, long bool) func(*Scan) error {
 }
 
 func (s *Scan) Run() error {
+	progName := filepath.Base(os.Args[0])
 	files, err := traverse.Traverse(
 		s.input,
 		s.filters,
 		s.sameDev,
 		s.cleanup,
+		func(msg string) {
+			_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", progName, msg)
+		},
 		func(err error) {
-			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err.Error())
+			_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
 		},
 	)
 	if err != nil {

@@ -61,12 +61,19 @@ func TestTraverse(t *testing.T) {
 	errFn := func(err error) {
 		allErrors = append(allErrors, err)
 	}
-	files, err := traverse.Traverse(tmp, nil, false, false, errFn)
+	var messages []string
+	notifyFn := func(msg string) {
+		messages = append(messages, msg)
+	}
+	files, err := traverse.Traverse(tmp, nil, false, false, notifyFn, errFn)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 	if len(allErrors) > 0 {
 		t.Errorf(errors.Join(allErrors...).Error())
+	}
+	if len(messages) > 0 {
+		t.Errorf("got messages: %#v", messages)
 	}
 	all := map[string]*traverse.FileInfo{}
 	var keys []string
@@ -104,7 +111,7 @@ func TestTraverse(t *testing.T) {
 	}
 	_ = os.Chmod(j("one/two"), 0)
 	defer func() { _ = os.Chmod(j("one/two"), 0755) }()
-	files, err = traverse.Traverse(tmp, nil, false, false, errFn)
+	files, err = traverse.Traverse(tmp, nil, false, false, notifyFn, errFn)
 	if err != nil {
 		t.Errorf("error returned: %v", err)
 	}
@@ -115,6 +122,9 @@ func TestTraverse(t *testing.T) {
 		if !strings.HasPrefix(err.Error(), "read dir "+tmp+"/one/two:") {
 			t.Errorf("wrong error: %v", err)
 		}
+	}
+	if len(messages) > 0 {
+		t.Errorf("got messages: %#v", messages)
 	}
 	maps.Clear(all)
 	keys = nil

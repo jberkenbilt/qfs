@@ -47,16 +47,17 @@ type FileInfo struct {
 }
 
 type traverser struct {
-	root     string
-	rootDev  uint64
-	filters  []*filter.Filter
-	xDev     bool
-	cleanup  bool
-	errChan  chan error
-	workChan chan *FileInfo
-	pending  atomic.Int64
-	zero     chan struct{}
-	q        *queue.Queue[*FileInfo]
+	root       string
+	rootDev    uint64
+	filters    []*filter.Filter
+	xDev       bool
+	cleanup    bool
+	errChan    chan error
+	notifyChan chan string
+	workChan   chan *FileInfo
+	pending    atomic.Int64
+	zero       chan struct{}
+	q          *queue.Queue[*FileInfo]
 }
 
 func (tr *traverser) getFileInfo(node *FileInfo) error {
@@ -87,8 +88,7 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 			if err = os.Remove(filepath.Join(tr.root, node.Path)); err != nil {
 				return fmt.Errorf("remove junk %s: %w", path, err)
 			} else {
-				// XXX Don't print
-				_, _ = fmt.Fprintf(os.Stderr, "%s: removing: %s\n", filepath.Base(os.Args[0]), node.Path)
+				tr.notifyChan <- fmt.Sprintf("removing: %s", node.Path)
 			}
 		}
 	case modeType&os.ModeDevice != 0:
@@ -189,18 +189,20 @@ func Traverse(
 	filters []*filter.Filter,
 	xDev bool,
 	cleanup bool,
+	notifyFn func(string),
 	errFn func(error),
 ) (*FileInfo, error) {
 	numWorkers := 5 * runtime.NumCPU()
 	tr := &traverser{
-		root:     root,
-		filters:  filters,
-		xDev:     xDev,
-		cleanup:  cleanup,
-		errChan:  make(chan error, numWorkers),
-		workChan: make(chan *FileInfo, numWorkers),
-		zero:     make(chan struct{}, 1),
-		q:        queue.New[*FileInfo](),
+		root:       root,
+		filters:    filters,
+		xDev:       xDev,
+		cleanup:    cleanup,
+		errChan:    make(chan error, numWorkers),
+		notifyChan: make(chan string, numWorkers),
+		workChan:   make(chan *FileInfo, numWorkers),
+		zero:       make(chan struct{}, 1),
+		q:          queue.New[*FileInfo](),
 	}
 
 	lst, err := os.Lstat(root)
@@ -220,11 +222,19 @@ func Traverse(
 			tr.worker()
 		}()
 	}
-	errWait := make(chan struct{}, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		defer close(errWait)
+		defer wg.Done()
 		for e := range tr.errChan {
 			errFn(e)
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for msg := range tr.notifyChan {
+			notifyFn(msg)
 		}
 	}()
 
@@ -233,7 +243,8 @@ func Traverse(
 	close(tr.workChan)
 	workerWait.Wait()
 	close(tr.errChan)
-	<-errWait
+	close(tr.notifyChan)
+	wg.Wait()
 	return tree, nil
 }
 
