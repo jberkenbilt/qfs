@@ -75,7 +75,7 @@ func (s *Scan) Run() (fileinfo.Provider, error) {
 			},
 		)
 	} else {
-		files, err = database.Open(s.input)
+		files, err = database.Open(s.input, s.filters)
 	}
 	if err != nil {
 		return nil, err

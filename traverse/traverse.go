@@ -276,6 +276,9 @@ func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
 		front := q.Front()
 		q.Remove(front)
 		cur := front.Value.(*treeNode)
+		// If a directory is excluded but some of its descendants are included, the
+		// directory itself won't appear. This could be changed if desired, but it would
+		// involve an extra tree traversal.
 		if cur.included {
 			if err := fn(cur.toFileInfo()); err != nil {
 				return err

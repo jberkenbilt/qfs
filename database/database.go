@@ -1,3 +1,6 @@
+// Package database implements read/write support for QFS v1 databases and read
+// support for qsync v3 databases. The database formats are similar with
+// differences. See README.md in this source directory.
 package database
 
 import (
@@ -5,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/filter"
 	"io"
 	"os"
 	"regexp"
@@ -15,6 +19,7 @@ import (
 
 type Db struct {
 	filename   string
+	filters    []*filter.Filter
 	format     dbFormat
 	f          *os.File
 	r          *bufio.Reader
@@ -35,21 +40,38 @@ var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
 
 // Open opens an on-disk database. The resulting object is a fileinfo.Provider.
 // You must call Close on the database.
-func Open(filename string) (*Db, error) {
+func Open(filename string, filters []*filter.Filter) (*Db, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", filename, err)
 	}
-	r := bufio.NewReader(f)
 	db := &Db{
 		filename: filename,
+		filters:  filters,
 		f:        f,
-		r:        r,
+	}
+	if err := db.Rewind(); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func (db *Db) Rewind() error {
+	_, err := db.f.Seek(0, io.SeekStart)
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	*db = Db{
+		filename: db.filename,
+		filters:  db.filters,
+		f:        db.f,
+		r:        bufio.NewReader(db.f),
 	}
 	first, err := db.readBytes('\n')
 	if err != nil {
-		_ = f.Close()
-		return nil, err
+		return err
 	}
 	header := string(first)
 	if header == "QFS 1" {
@@ -57,17 +79,16 @@ func Open(filename string) (*Db, error) {
 	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
 		db.format = dbQSync
 	} else {
-		_ = f.Close()
-		return nil, fmt.Errorf("%s is not a qfs database", filename)
+		return fmt.Errorf("%s is not a qfs database", db.filename)
 	}
-	return db, nil
+	return nil
 }
 
 func (db *Db) readBytes(delimiter byte) ([]byte, error) {
 	db.lastOffset = db.nextOffset
 	data, err := db.r.ReadBytes(delimiter)
 	if err != nil {
-		return nil, fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+		return data, fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
 	}
 	db.nextOffset += uint64(len(data))
 	return data[:len(data)-1], nil
@@ -77,7 +98,7 @@ func (db *Db) read(data []byte) error {
 	db.lastOffset = db.nextOffset
 	n, err := io.ReadFull(db.r, data)
 	if err != nil {
-		return fmt.Errorf("%s: at offset %d: %w", db.filename, db.lastOffset, err)
+		return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
 	}
 	db.nextOffset += uint64(n)
 	return nil
@@ -103,15 +124,21 @@ func (db *Db) getRow() ([]byte, error) {
 	if db.format == dbQSync {
 		// Discard null character
 		if err := db.skip(0); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, nil
+			}
 			return nil, err
 		}
 	}
 	start, err := db.readBytes(0)
 	if err != nil {
+		if db.format == dbQfs && len(start) == 0 && errors.Is(err, io.EOF) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	m := lenRe.FindSubmatch(start)
-	if m == nil {
+	if len(m) == 0 {
 		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", db.filename, db.lastOffset)
 	}
 	length, _ := strconv.Atoi(string(m[1]))
@@ -137,12 +164,19 @@ func (db *Db) getRow() ([]byte, error) {
 }
 
 func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
+	if db.lastRow != nil {
+		if err := db.Rewind(); err != nil {
+			// TEST: NOT COVERED
+			return err
+		}
+	}
 	for {
 		data, err := db.getRow()
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
+		if err != nil {
 			return err
+		}
+		if data == nil {
+			break
 		}
 		fields := strings.Split(string(data), "\x00")
 		var f *fileinfo.FileInfo
@@ -156,9 +190,13 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 			return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
 		}
 		db.lastFields = fields
-		err = fn(f)
-		if err != nil {
-			return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+		if f != nil {
+			if included, _ := filter.IsIncluded(f.Path, db.filters...); included {
+				err = fn(f)
+				if err != nil {
+					return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+				}
+			}
 		}
 	}
 	return nil
@@ -172,22 +210,20 @@ func (db *Db) copyFieldIfEmpty(fields []string, n int) {
 
 func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 	if len(fields) != 9 {
-		return nil, fmt.Errorf("wrong number of fields: %d", len(fields))
+		return nil, fmt.Errorf("wrong number of fields: %d, not 9", len(fields))
 	}
 	// 0    1     2    3    4   5   6          7
 	// name mtime size mode uid gid link_count special
 	db.copyFieldIfEmpty(fields, 3) // mode
 	db.copyFieldIfEmpty(fields, 4) // uid
 	db.copyFieldIfEmpty(fields, 5) // gid
-	path := fields[0]
-	if strings.HasPrefix(path, "./") {
-		path = path[2:]
-	}
+	path := strings.TrimPrefix(fields[0], "./")
 	mode, _ := strconv.ParseInt(fields[3], 8, 32)
 	fType := mode & 0o170000
 	perms := uint16(mode & 0o7777)
 	fileType := fileinfo.TypeUnknown
 	var size int64
+	special := fields[7]
 	if fType == 0o140000 {
 		fileType = fileinfo.TypeSocket
 	} else if fType == 0o120000 {
@@ -198,10 +234,18 @@ func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 		size = int64(t)
 	} else if fType == 0o060000 {
 		fileType = fileinfo.TypeBlockDev
+		special = strings.TrimPrefix(special, "b,")
 	} else if fType == 0o040000 {
 		fileType = fileinfo.TypeDirectory
+		if special == "-1" {
+			// qsync used this for pruned directories; qfs ignores them, so ignore for
+			// compatibility.
+			return nil, nil
+		}
+		special = ""
 	} else if fType == 0o020000 {
 		fileType = fileinfo.TypeCharDev
+		special = strings.TrimPrefix(special, "c,")
 	} else if fType == 0o010000 {
 		fileType = fileinfo.TypePipe
 	}
@@ -216,13 +260,13 @@ func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 		Permissions: perms,
 		Uid:         uint32(uid),
 		Gid:         uint32(gid),
-		Special:     fields[7],
+		Special:     special,
 	}, nil
 }
 
 func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 	if len(fields) != 8 {
-		return nil, fmt.Errorf("wrong number of fields: %d", len(fields))
+		return nil, fmt.Errorf("wrong number of fields: %d, not 8", len(fields))
 	}
 	// 0    1     2     3    4    5   6   7
 	// name fType mtime size mode uid gid special
@@ -276,6 +320,7 @@ func WriteDb(filename string, files fileinfo.Provider) error {
 	}
 	defer func() { _ = w.Close() }()
 	if _, err := w.WriteString("QFS 1\n"); err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	var lastLine []byte
@@ -306,11 +351,14 @@ func WriteDb(filename string, files fileinfo.Provider) error {
 		}
 		_, err := w.WriteString(fmt.Sprintf("%d%s\x00%s\n", len(line)-same, sameStr, line[same:]))
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		return nil
 	})
 	if err != nil {
+		// TEST: NOT COVERED. This would only happen from a write error, which is not
+		// exercised.
 		return err
 	}
 	return w.Close()
