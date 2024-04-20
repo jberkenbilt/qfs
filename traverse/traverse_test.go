@@ -3,6 +3,7 @@ package traverse_test
 import (
 	"errors"
 	"fmt"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
 	"golang.org/x/exp/maps"
@@ -89,9 +90,9 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	all := map[string]*traverse.FileInfo{}
+	all := map[string]*fileinfo.FileInfo{}
 	var keys []string
-	fn := func(f *traverse.FileInfo) error {
+	fn := func(f *fileinfo.FileInfo) error {
 		all[f.Path] = f
 		keys = append(keys, f.Path)
 		return nil
@@ -125,11 +126,11 @@ func TestTraverse(t *testing.T) {
 	if !(all["potato"].Uid == uid && all["potato"].Gid == gid) {
 		t.Errorf("uid/gid are broken: %#v", all["potato"])
 	}
-	if !(all["quack"].FileType == traverse.TypeLink &&
-		all["one/flute"].FileType == traverse.TypePipe &&
-		all["one/lost-sock"].FileType == traverse.TypeSocket &&
-		all["potato"].FileType == traverse.TypeFile &&
-		all["one"].FileType == traverse.TypeDirectory) {
+	if !(all["quack"].FileType == fileinfo.TypeLink &&
+		all["one/flute"].FileType == fileinfo.TypePipe &&
+		all["one/lost-sock"].FileType == fileinfo.TypeSocket &&
+		all["potato"].FileType == fileinfo.TypeFile &&
+		all["one"].FileType == fileinfo.TypeDirectory) {
 		t.Errorf("wrong file types")
 	}
 	defer func() {
@@ -186,11 +187,11 @@ func TestDevices(t *testing.T) {
 	}
 	foundChar := false
 	foundBlock := false
-	_ = files.ForEach(func(f *traverse.FileInfo) error {
-		if f.FileType == traverse.TypeCharDev {
+	_ = files.ForEach(func(f *fileinfo.FileInfo) error {
+		if f.FileType == fileinfo.TypeCharDev {
 			foundChar = true
 		}
-		if f.FileType == traverse.TypeBlockDev {
+		if f.FileType == fileinfo.TypeBlockDev {
 			foundBlock = true
 		}
 		if foundBlock && foundChar {
@@ -272,9 +273,9 @@ func TestFilterInteraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traverse failed: %v", err)
 	}
-	allFiles := map[string]*traverse.FileInfo{}
+	allFiles := map[string]*fileinfo.FileInfo{}
 	var paths []string
-	_ = files.ForEach(func(f *traverse.FileInfo) error {
+	_ = files.ForEach(func(f *fileinfo.FileInfo) error {
 		allFiles[f.Path] = f
 		paths = append(paths, f.Path)
 		return nil

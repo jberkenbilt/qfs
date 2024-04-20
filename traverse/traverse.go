@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
 	"os"
@@ -18,37 +19,13 @@ import (
 	"time"
 )
 
-type FileType rune
-
-const (
-	TypeFile      FileType = 'f'
-	TypeDirectory FileType = 'd'
-	TypeLink      FileType = 'l'
-	TypeCharDev   FileType = 'c'
-	TypeBlockDev  FileType = 'b'
-	TypePipe      FileType = 'p'
-	TypeSocket    FileType = 's'
-	TypeUnknown   FileType = 'x'
-)
-
-type FileInfo struct {
-	Path        string
-	FileType    FileType
-	ModTime     time.Time
-	Size        int64
-	Permissions uint16
-	Uid         uint32
-	Gid         uint32
-	Special     string
-}
-
 type Result struct {
 	tree *treeNode
 }
 
 type treeNode struct {
 	path        string
-	fileType    FileType
+	fileType    fileinfo.FileType
 	modTime     time.Time
 	size        int64
 	permissions uint16
@@ -75,14 +52,14 @@ type traverser struct {
 	q          *queue.Queue[*treeNode]
 }
 
-func (n *treeNode) toFileInfo() *FileInfo {
+func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
 	var special string
-	if n.fileType == TypeLink {
+	if n.fileType == fileinfo.TypeLink {
 		special = n.target
-	} else if n.fileType == TypeBlockDev || n.fileType == TypeCharDev {
+	} else if n.fileType == fileinfo.TypeBlockDev || n.fileType == fileinfo.TypeCharDev {
 		special = fmt.Sprintf("%d,%d", n.major, n.minor)
 	}
-	return &FileInfo{
+	return &fileinfo.FileInfo{
 		Path:        n.path,
 		FileType:    n.fileType,
 		ModTime:     n.modTime,
@@ -98,7 +75,7 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 	path := filepath.Join(tr.root, node.path)
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
-	node.fileType = TypeUnknown
+	node.fileType = fileinfo.TypeUnknown
 	lst, err := os.Lstat(path)
 	if err != nil {
 		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
@@ -118,7 +95,7 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 	modeType := mode.Type()
 	switch {
 	case mode.IsRegular():
-		node.fileType = TypeFile
+		node.fileType = fileinfo.TypeFile
 		node.size = lst.Size()
 		if group == filter.Junk && tr.cleanup {
 			node.included = false
@@ -130,16 +107,16 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 		}
 	case modeType&os.ModeDevice != 0:
 		if modeType&os.ModeCharDevice != 0 {
-			node.fileType = TypeCharDev
+			node.fileType = fileinfo.TypeCharDev
 		} else {
-			node.fileType = TypeBlockDev
+			node.fileType = fileinfo.TypeBlockDev
 		}
 	case modeType&os.ModeSocket != 0:
-		node.fileType = TypeSocket
+		node.fileType = fileinfo.TypeSocket
 	case modeType&os.ModeNamedPipe != 0:
-		node.fileType = TypePipe
+		node.fileType = fileinfo.TypePipe
 	case modeType&os.ModeSymlink != 0:
-		node.fileType = TypeLink
+		node.fileType = fileinfo.TypeLink
 		target, err := os.Readlink(path)
 		if err != nil {
 			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
@@ -160,7 +137,7 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 			node.included = false
 			break
 		}
-		node.fileType = TypeDirectory
+		node.fileType = fileinfo.TypeDirectory
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("read dir %s: %w", path, err)
@@ -291,8 +268,8 @@ func Traverse(
 
 // ForEach traverses the traversal result and calls the function for each item in
 // lexical order. If the function returns an error, traversal is stopped, and the
-// error is returned.
-func (r *Result) ForEach(fn func(f *FileInfo) error) error {
+// error is returned. This implements the fileinfo.FileProvider interface.
+func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
 	q := list.New()
 	q.PushFront(r.tree)
 	for q.Len() > 0 {

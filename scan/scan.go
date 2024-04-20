@@ -3,6 +3,7 @@ package scan
 import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/database"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
 	"os"
@@ -12,14 +13,13 @@ import (
 type Options func(*Scan) error
 
 type Scan struct {
-	input      string
-	filters    []*filter.Filter
-	sameDev    bool
-	cleanup    bool
-	db         string
-	stdout     bool
-	long       bool
-	resultChan chan<- *traverse.FileInfo
+	input   string
+	filters []*filter.Filter
+	sameDev bool
+	cleanup bool
+	db      string
+	stdout  bool
+	long    bool
 }
 
 func New(input string, options ...Options) (*Scan, error) {
@@ -70,13 +70,6 @@ func WithStdout(stdout bool, long bool) func(*Scan) error {
 	}
 }
 
-func WithResultChan(c chan *traverse.FileInfo) func(*Scan) error {
-	return func(s *Scan) error {
-		s.resultChan = c
-		return nil
-	}
-}
-
 func (s *Scan) Run() error {
 	progName := filepath.Base(os.Args[0])
 	files, err := traverse.Traverse(
@@ -97,28 +90,20 @@ func (s *Scan) Run() error {
 	if s.db != "" {
 		return database.WriteDb(s.db, files)
 	} else if s.stdout {
-		return files.ForEach(func(f *traverse.FileInfo) error {
+		return files.ForEach(func(f *fileinfo.FileInfo) error {
 			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
 			if s.long {
 				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
 			}
 			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-			if f.FileType == traverse.TypeLink {
+			if f.FileType == fileinfo.TypeLink {
 				fmt.Printf(" -> %s", f.Special)
-			} else if f.FileType == traverse.TypeBlockDev || f.FileType == traverse.TypeCharDev {
+			} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
 				fmt.Printf(" %s", f.Special)
 			}
 			fmt.Println("")
 			return nil
 		})
-	} else if s.resultChan != nil {
-		return func() error {
-			defer close(s.resultChan)
-			return files.ForEach(func(f *traverse.FileInfo) error {
-				s.resultChan <- f
-				return nil
-			})
-		}()
 	}
 	return nil
 }

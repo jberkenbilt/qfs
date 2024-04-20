@@ -2,7 +2,7 @@ package database
 
 import (
 	"fmt"
-	"github.com/jberkenbilt/qfs/traverse"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"os"
 	"strconv"
 	"strings"
@@ -26,7 +26,7 @@ func newOrEmpty[T comparable](first bool, old *T, new T, s string) string {
 	return ""
 }
 
-func WriteDb(filename string, files *traverse.Result) error {
+func WriteDb(filename string, files fileinfo.Provider) error {
 	w, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("create database \"%s\": %w", filename, err)
@@ -40,7 +40,7 @@ func WriteDb(filename string, files *traverse.Result) error {
 	var lastUid uint32
 	var lastGid uint32
 	first := true
-	err = files.ForEach(func(f *traverse.FileInfo) error {
+	err = files.ForEach(func(f *fileinfo.FileInfo) error {
 		mode := newOrEmpty(first, &lastMode, f.Permissions, fmt.Sprintf("0%o", f.Permissions))
 		uid := newOrEmpty(first, &lastUid, f.Uid, strconv.FormatInt(int64(f.Uid), 10))
 		gid := newOrEmpty(first, &lastGid, f.Gid, strconv.FormatInt(int64(f.Gid), 10))
