@@ -187,3 +187,23 @@ func TestFileErrors(t *testing.T) {
 	check("testdata/bad6", "testdata/bad6:2: empty pattern not allowed")
 	check("testdata/bad7", "testdata/bad7:1: empty pattern not allowed")
 }
+
+func TestDefault(t *testing.T) {
+	f := New()
+	if !f.defaultInclude() {
+		t.Errorf("blank filter should have default include")
+	}
+	f.AddBase(Exclude, "z")
+	f.AddBase(Prune, "y")
+	if !f.defaultInclude() {
+		t.Errorf("filter with no include rules should have default include")
+	}
+	f.AddBase(Include, "x")
+	if f.defaultInclude() {
+		t.Errorf("adding include rule should turn default to false")
+	}
+	if f.includeDot != nil {
+		t.Errorf("includeDot was set, invalidating tests")
+	}
+	// Explicit toggling of default is tested in regular filter tests
+}

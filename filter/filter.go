@@ -234,7 +234,9 @@ func (f *Filter) ReadLine(group Group, line string) error {
 		f.AddBase(group, line[len(prefixBase):])
 	case strings.HasPrefix(line, prefixExt):
 		if err := f.AddPattern(group, regexp.QuoteMeta("."+line[len(prefixExt):])+`$`); err != nil {
-			// Testing note: no way to actually get an error here...
+			// Testing note: no way to actually get an error here. The regexp will always be
+			// valid because it was constructed with QuoteMeta. If this condition happens, it
+			// would indicate a bug in the code.
 			return err
 		}
 	default:

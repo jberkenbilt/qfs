@@ -64,8 +64,11 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 	path := filepath.Join(tr.root, node.Path)
 	included, group := filter.IsIncluded(node.Path, tr.filters...)
 	node.Included = included
+	node.FileType = TypeUnknown
 	lst, err := os.Lstat(path)
 	if err != nil {
+		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
+		// in its directory but can't lstat, so this is not exercised.
 		return fmt.Errorf("lstat %s: %w", path, err)
 	}
 	node.ModTime = lst.ModTime()
@@ -105,6 +108,8 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 		node.FileType = TypeLink
 		target, err := os.Readlink(path)
 		if err != nil {
+			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
+			// readlink fails.
 			return fmt.Errorf("readlink %s: %w", path, err)
 		}
 		node.Target = target
@@ -114,7 +119,10 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 			break
 		}
 		if tr.xDev && st != nil && tr.rootDev != st.Dev {
-			// This is on a different device. Exclude and don't traverse into it.
+			// TEST: CAN'T COVER. This is on a different device. Exclude and don't traverse
+			// into it. This is not exercised in the test suite as it is difficult without
+			// root/admin privileges to construct a scenario where crossing device boundaries
+			// will happen.
 			node.Included = false
 			break
 		}
@@ -129,9 +137,6 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 		for _, e := range entries {
 			node.Children = append(node.Children, &FileInfo{Path: filepath.Join(node.Path, e.Name())})
 		}
-	default:
-		// Not possible to exercise in test suite
-		node.FileType = TypeUnknown
 	}
 	return nil
 }
