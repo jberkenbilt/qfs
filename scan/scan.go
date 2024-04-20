@@ -12,13 +12,14 @@ import (
 type Options func(*Scan) error
 
 type Scan struct {
-	input   string
-	filters []*filter.Filter
-	sameDev bool
-	cleanup bool
-	db      string
-	stdout  bool
-	long    bool
+	input      string
+	filters    []*filter.Filter
+	sameDev    bool
+	cleanup    bool
+	db         string
+	stdout     bool
+	long       bool
+	resultChan chan<- *traverse.FileInfo
 }
 
 func New(input string, options ...Options) (*Scan, error) {
@@ -69,6 +70,13 @@ func WithStdout(stdout bool, long bool) func(*Scan) error {
 	}
 }
 
+func WithResultChan(c chan *traverse.FileInfo) func(*Scan) error {
+	return func(s *Scan) error {
+		s.resultChan = c
+		return nil
+	}
+}
+
 func (s *Scan) Run() error {
 	progName := filepath.Base(os.Args[0])
 	files, err := traverse.Traverse(
@@ -88,19 +96,29 @@ func (s *Scan) Run() error {
 	}
 	if s.db != "" {
 		return database.WriteDb(s.db, files)
+	} else if s.stdout {
+		return files.Flatten(func(f *traverse.FileInfo) error {
+			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
+			if s.long {
+				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
+			}
+			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+			if f.FileType == traverse.TypeLink {
+				fmt.Printf(" -> %s", f.Target)
+			} else if f.FileType == traverse.TypeBlockDev || f.FileType == traverse.TypeCharDev {
+				fmt.Printf(" %d,%d", f.Major, f.Minor)
+			}
+			fmt.Println("")
+			return nil
+		})
+	} else if s.resultChan != nil {
+		return func() error {
+			defer close(s.resultChan)
+			return files.Flatten(func(f *traverse.FileInfo) error {
+				s.resultChan <- f
+				return nil
+			})
+		}()
 	}
-	return files.Flatten(func(f *traverse.FileInfo) error {
-		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
-		if s.long {
-			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
-		}
-		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-		if f.FileType == traverse.TypeLink {
-			fmt.Printf(" -> %s", f.Target)
-		} else if f.FileType == traverse.TypeBlockDev || f.FileType == traverse.TypeCharDev {
-			fmt.Printf(" %d,%d", f.Major, f.Minor)
-		}
-		fmt.Println("")
-		return nil
-	})
+	return nil
 }
