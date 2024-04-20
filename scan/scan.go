@@ -97,16 +97,16 @@ func (s *Scan) Run() error {
 	if s.db != "" {
 		return database.WriteDb(s.db, files)
 	} else if s.stdout {
-		return files.Flatten(func(f *traverse.FileInfo) error {
+		return files.ForEach(func(f *traverse.FileInfo) error {
 			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
 			if s.long {
 				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
 			}
 			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
 			if f.FileType == traverse.TypeLink {
-				fmt.Printf(" -> %s", f.Target)
+				fmt.Printf(" -> %s", f.Special)
 			} else if f.FileType == traverse.TypeBlockDev || f.FileType == traverse.TypeCharDev {
-				fmt.Printf(" %d,%d", f.Major, f.Minor)
+				fmt.Printf(" %s", f.Special)
 			}
 			fmt.Println("")
 			return nil
@@ -114,7 +114,7 @@ func (s *Scan) Run() error {
 	} else if s.resultChan != nil {
 		return func() error {
 			defer close(s.resultChan)
-			return files.Flatten(func(f *traverse.FileInfo) error {
+			return files.ForEach(func(f *traverse.FileInfo) error {
 				s.resultChan <- f
 				return nil
 			})

@@ -96,7 +96,7 @@ func TestTraverse(t *testing.T) {
 		keys = append(keys, f.Path)
 		return nil
 	}
-	_ = files.Flatten(fn)
+	_ = files.ForEach(fn)
 	expKeys := []string{
 		".",
 		"potato",
@@ -113,7 +113,7 @@ func TestTraverse(t *testing.T) {
 	if !slices.Equal(expKeys, keys) {
 		t.Errorf("wrong entries: %#v", keys)
 	}
-	if all["quack"].Target != "potato" || all["baa"].Target != "salad" {
+	if all["quack"].Special != "potato" || all["baa"].Special != "salad" {
 		t.Errorf("wrong link targets: %#v, %#v", all["quack"], all["baa"])
 	}
 	if all["one/two/moo"].Size != 4 {
@@ -155,7 +155,7 @@ func TestTraverse(t *testing.T) {
 	}
 	maps.Clear(all)
 	keys = nil
-	_ = files.Flatten(fn)
+	_ = files.ForEach(fn)
 	expKeys = []string{
 		".",
 		"potato",
@@ -186,7 +186,7 @@ func TestDevices(t *testing.T) {
 	}
 	foundChar := false
 	foundBlock := false
-	_ = files.Flatten(func(f *traverse.FileInfo) error {
+	_ = files.ForEach(func(f *traverse.FileInfo) error {
 		if f.FileType == traverse.TypeCharDev {
 			foundChar = true
 		}
@@ -274,7 +274,7 @@ func TestFilterInteraction(t *testing.T) {
 	}
 	allFiles := map[string]*traverse.FileInfo{}
 	var paths []string
-	_ = files.Flatten(func(f *traverse.FileInfo) error {
+	_ = files.ForEach(func(f *traverse.FileInfo) error {
 		allFiles[f.Path] = f
 		paths = append(paths, f.Path)
 		return nil
