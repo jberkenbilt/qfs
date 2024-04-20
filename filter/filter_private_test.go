@@ -69,8 +69,8 @@ func checkFile(
 	if junkRe != actJunk {
 		t.Errorf("junk: got %v, wanted %v", actJunk, junkRe)
 	}
-	if f.defaultInclude != defaultInclude {
-		t.Errorf("default include: got %v, wanted %v", f.defaultInclude, defaultInclude)
+	if f.defaultInclude() != defaultInclude {
+		t.Errorf("default include: got %v, wanted %v", f.defaultInclude(), defaultInclude)
 	}
 }
 

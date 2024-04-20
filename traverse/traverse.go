@@ -48,7 +48,10 @@ type FileInfo struct {
 
 type traverser struct {
 	root     string
+	rootDev  uint64
 	filters  []*filter.Filter
+	xDev     bool
+	cleanup  bool
 	errChan  chan error
 	workChan chan *FileInfo
 	pending  atomic.Int64
@@ -79,6 +82,15 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 	case mode.IsRegular():
 		node.FileType = TypeFile
 		node.Size = lst.Size()
+		if group == filter.Junk && tr.cleanup {
+			node.Included = false
+			if err = os.Remove(filepath.Join(tr.root, node.Path)); err != nil {
+				return fmt.Errorf("remove junk %s: %w", path, err)
+			} else {
+				// XXX Don't print
+				_, _ = fmt.Fprintf(os.Stderr, "%s: removing: %s\n", filepath.Base(os.Args[0]), node.Path)
+			}
+		}
 	case modeType&os.ModeDevice != 0:
 		if modeType&os.ModeCharDevice != 0 {
 			node.FileType = TypeCharDev
@@ -99,6 +111,11 @@ func (tr *traverser) getFileInfo(node *FileInfo) error {
 	case mode.IsDir():
 		if !included && group == filter.Prune {
 			// Don't traverse into pruned directories
+			break
+		}
+		if tr.xDev && st != nil && tr.rootDev != st.Dev {
+			// This is on a different device. Exclude and don't traverse into it.
+			node.Included = false
 			break
 		}
 		node.FileType = TypeDirectory
@@ -167,16 +184,34 @@ func (tr *traverser) traverse(node *FileInfo) {
 // whether the item is included. Pruned directories' children are not included,
 // but regular excluded directories are present in case they have included
 // children.
-func Traverse(root string, filters []*filter.Filter, errFn func(error)) (*FileInfo, error) {
+func Traverse(
+	root string,
+	filters []*filter.Filter,
+	xDev bool,
+	cleanup bool,
+	errFn func(error),
+) (*FileInfo, error) {
 	numWorkers := 5 * runtime.NumCPU()
 	tr := &traverser{
 		root:     root,
 		filters:  filters,
+		xDev:     xDev,
+		cleanup:  cleanup,
 		errChan:  make(chan error, numWorkers),
 		workChan: make(chan *FileInfo, numWorkers),
 		zero:     make(chan struct{}, 1),
 		q:        queue.New[*FileInfo](),
 	}
+
+	lst, err := os.Lstat(root)
+	if err != nil {
+		return nil, fmt.Errorf("lstat %s: %w", root, err)
+	}
+	st, ok := lst.Sys().(*syscall.Stat_t)
+	if ok && st != nil {
+		tr.rootDev = st.Dev
+	}
+
 	var workerWait sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		workerWait.Add(1)

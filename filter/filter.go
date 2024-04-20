@@ -52,9 +52,21 @@ func newFilterGroup() *filterGroup {
 }
 
 type Filter struct {
-	groups         []*filterGroup
-	junk           *regexp.Regexp
-	defaultInclude bool
+	groups     []*filterGroup
+	junk       *regexp.Regexp
+	includeDot *bool
+}
+
+func (f *Filter) defaultInclude() bool {
+	if f.includeDot != nil {
+		return *f.includeDot
+	}
+	if len(f.groups[Include].path) == 0 &&
+		len(f.groups[Include].base) == 0 &&
+		len(f.groups[Include].pattern) == 0 {
+		return true
+	}
+	return false
 }
 
 func New() *Filter {
@@ -103,7 +115,7 @@ func (f *Filter) SetJunk(val string) error {
 }
 
 func (f *Filter) SetDefaultInclude(val bool) {
-	f.defaultInclude = val
+	f.includeDot = &val
 }
 
 func (fg *filterGroup) match(path string, base string) bool {
@@ -174,7 +186,7 @@ func IsIncluded(path string, filters ...*Filter) (included bool, group Group) {
 	defaultInclude := true
 thisFilter:
 	for _, f := range filters {
-		if !f.defaultInclude {
+		if !f.defaultInclude() {
 			// If any filter has defaultInclude false, that becomes the overall default.
 			defaultInclude = false
 		}
