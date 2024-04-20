@@ -2,19 +2,26 @@ package database
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Db struct {
-	filename string
-	format   dbFormat
-	lineNo   int
-	f        *os.File
-	r        *bufio.Scanner
+	filename   string
+	format     dbFormat
+	f          *os.File
+	r          *bufio.Reader
+	lastOffset uint64
+	nextOffset uint64
+	lastRow    []byte
+	lastFields []string
 }
 
 type dbFormat int
@@ -24,6 +31,8 @@ const (
 	dbQfs
 )
 
+var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
+
 // Open opens an on-disk database. The resulting object is a fileinfo.Provider.
 // You must call Close on the database.
 func Open(filename string) (*Db, error) {
@@ -31,25 +40,21 @@ func Open(filename string) (*Db, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", filename, err)
 	}
-	r := bufio.NewScanner(f)
+	r := bufio.NewReader(f)
 	db := &Db{
 		filename: filename,
 		f:        f,
 		r:        r,
 	}
-	var first string
-	if r.Scan() {
-		first = r.Text()
-		db.lineNo++
-	} else {
+	first, err := db.readBytes('\n')
+	if err != nil {
 		_ = f.Close()
-		if err := r.Err(); err != nil {
-			return nil, fmt.Errorf("%s: %w", filename, err)
-		}
+		return nil, err
 	}
-	if first == "QFS 1" {
+	header := string(first)
+	if header == "QFS 1" {
 		db.format = dbQfs
-	} else if first == "SYNC_TOOLS_DB_VERSION 3" {
+	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
 		db.format = dbQSync
 	} else {
 		_ = f.Close()
@@ -58,40 +63,192 @@ func Open(filename string) (*Db, error) {
 	return db, nil
 }
 
-func (db *Db) Close() error {
-	return db.f.Close()
+func (db *Db) readBytes(delimiter byte) ([]byte, error) {
+	db.lastOffset = db.nextOffset
+	data, err := db.r.ReadBytes(delimiter)
+	if err != nil {
+		return nil, fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+	}
+	db.nextOffset += uint64(len(data))
+	return data[:len(data)-1], nil
 }
 
-func (db *Db) ForEach(func(*fileinfo.FileInfo) error) error {
-	for db.r.Scan() {
-		line := db.r.Text()
-		db.lineNo++
-		fields := strings.Split(line, "\x00")
-		switch db.format {
-		case dbQSync:
-			if err := db.handleQSync(fields); err != nil {
-				return err
-			}
-		case dbQfs:
-			if err := db.handleQfs(fields); err != nil {
-				return err
-			}
-		}
+func (db *Db) read(data []byte) error {
+	db.lastOffset = db.nextOffset
+	n, err := io.ReadFull(db.r, data)
+	if err != nil {
+		return fmt.Errorf("%s: at offset %d: %w", db.filename, db.lastOffset, err)
 	}
-	if err := db.r.Err(); err != nil {
-		return fmt.Errorf("%s: error after line %d: %w", db.filename, db.lineNo, err)
+	db.nextOffset += uint64(n)
+	return nil
+}
+
+func (db *Db) skip(val byte) error {
+	skip := make([]byte, 1)
+	err := db.read(skip)
+	if err != nil {
+		return err
+	}
+	if skip[0] != val {
+		return fmt.Errorf("%s: expected byte %d at offset %d", db.filename, val, db.lastOffset)
 	}
 	return nil
 }
 
-func (db *Db) handleQSync(fields []string) error {
-	fmt.Printf("XXX qsync %v\n", fields[1])
-	return nil // XXX
+func (db *Db) Close() error {
+	return db.f.Close()
 }
 
-func (db *Db) handleQfs(fields []string) error {
-	fmt.Printf("XXX qfs %v\n", fields[0])
-	return nil // XXX
+func (db *Db) getRow() ([]byte, error) {
+	if db.format == dbQSync {
+		// Discard null character
+		if err := db.skip(0); err != nil {
+			return nil, err
+		}
+	}
+	start, err := db.readBytes(0)
+	if err != nil {
+		return nil, err
+	}
+	m := lenRe.FindSubmatch(start)
+	if m == nil {
+		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", db.filename, db.lastOffset)
+	}
+	length, _ := strconv.Atoi(string(m[1]))
+	same := 0
+	if m[2] != nil {
+		same, _ = strconv.Atoi(string(m[2]))
+		if len(db.lastRow) < same {
+			return nil, fmt.Errorf("%s at offset %d: `same` value is too large", db.filename, db.lastOffset)
+		}
+	}
+	data := make([]byte, length+same)
+	copy(data, db.lastRow[:same])
+	err = db.read(data[same:])
+	if err != nil {
+		return nil, err
+	}
+	err = db.skip('\n')
+	if err != nil {
+		return nil, err
+	}
+	db.lastRow = data
+	return data, nil
+}
+
+func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
+	for {
+		data, err := db.getRow()
+		if errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return err
+		}
+		fields := strings.Split(string(data), "\x00")
+		var f *fileinfo.FileInfo
+		switch db.format {
+		case dbQSync:
+			f, err = db.handleQSync(fields)
+		case dbQfs:
+			f, err = db.handleQfs(fields)
+		}
+		if err != nil {
+			return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+		}
+		db.lastFields = fields
+		err = fn(f)
+		if err != nil {
+			return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
+		}
+	}
+	return nil
+}
+
+func (db *Db) copyFieldIfEmpty(fields []string, n int) {
+	if len(fields) > n && fields[n] == "" && len(db.lastFields) > n {
+		fields[n] = db.lastFields[n]
+	}
+}
+
+func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
+	if len(fields) != 9 {
+		return nil, fmt.Errorf("wrong number of fields: %d", len(fields))
+	}
+	// 0    1     2    3    4   5   6          7
+	// name mtime size mode uid gid link_count special
+	db.copyFieldIfEmpty(fields, 3) // mode
+	db.copyFieldIfEmpty(fields, 4) // uid
+	db.copyFieldIfEmpty(fields, 5) // gid
+	path := fields[0]
+	if strings.HasPrefix(path, "./") {
+		path = path[2:]
+	}
+	mode, _ := strconv.ParseInt(fields[3], 8, 32)
+	fType := mode & 0o170000
+	perms := uint16(mode & 0o7777)
+	fileType := fileinfo.TypeUnknown
+	var size int64
+	if fType == 0o140000 {
+		fileType = fileinfo.TypeSocket
+	} else if fType == 0o120000 {
+		fileType = fileinfo.TypeLink
+	} else if fType == 0o100000 {
+		fileType = fileinfo.TypeFile
+		t, _ := strconv.Atoi(fields[2])
+		size = int64(t)
+	} else if fType == 0o060000 {
+		fileType = fileinfo.TypeBlockDev
+	} else if fType == 0o040000 {
+		fileType = fileinfo.TypeDirectory
+	} else if fType == 0o020000 {
+		fileType = fileinfo.TypeCharDev
+	} else if fType == 0o010000 {
+		fileType = fileinfo.TypePipe
+	}
+	uid, _ := strconv.Atoi(fields[4])
+	gid, _ := strconv.Atoi(fields[5])
+	seconds, _ := strconv.Atoi(fields[1])
+	return &fileinfo.FileInfo{
+		Path:        path,
+		FileType:    fileType,
+		ModTime:     time.Unix(int64(seconds), 0),
+		Size:        size,
+		Permissions: perms,
+		Uid:         uint32(uid),
+		Gid:         uint32(gid),
+		Special:     fields[7],
+	}, nil
+}
+
+func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
+	if len(fields) != 8 {
+		return nil, fmt.Errorf("wrong number of fields: %d", len(fields))
+	}
+	// 0    1     2     3    4    5   6   7
+	// name fType mtime size mode uid gid special
+	db.copyFieldIfEmpty(fields, 4) // mode
+	db.copyFieldIfEmpty(fields, 5) // uid
+	db.copyFieldIfEmpty(fields, 6) // gid
+	path := fields[0]
+	fileType := fileinfo.TypeUnknown
+	if len(fields[1]) == 1 {
+		fileType = fileinfo.FileType(fields[1][0])
+	}
+	milliseconds, _ := strconv.Atoi(fields[2])
+	size, _ := strconv.Atoi(fields[3])
+	mode, _ := strconv.ParseInt(fields[4], 8, 32)
+	uid, _ := strconv.Atoi(fields[5])
+	gid, _ := strconv.Atoi(fields[6])
+	return &fileinfo.FileInfo{
+		Path:        path,
+		FileType:    fileType,
+		ModTime:     time.UnixMilli(int64(milliseconds)),
+		Size:        int64(size),
+		Permissions: uint16(mode),
+		Uid:         uint32(uid),
+		Gid:         uint32(gid),
+		Special:     fields[7],
+	}, nil
 }
 
 func commonPrefix(b1 []byte, b2 []byte) int {
