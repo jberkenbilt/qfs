@@ -4,6 +4,8 @@ package qfs
 import (
 	"errors"
 	"fmt"
+	"github.com/jberkenbilt/qfs/database"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/scan"
 	"os"
@@ -256,18 +258,37 @@ func Run(args []string) error {
 	}
 	switch q.action {
 	case actScan:
-		s, err := scan.New(
+		scanner, err := scan.New(
 			q.dir,
 			scan.WithFilters(q.filters),
 			scan.WithSameDev(q.sameDev),
 			scan.WithCleanup(q.cleanup),
-			scan.WithDb(q.db),
-			scan.WithStdout(q.db == "", q.long),
 		)
+		if err != nil {
+			return fmt.Errorf("crate scanner: %w", err)
+		}
+		files, err := scanner.Run()
 		if err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
-		return s.Run()
+		if q.db != "" {
+			return database.WriteDb(q.db, files)
+		}
+		return files.ForEach(func(f *fileinfo.FileInfo) error {
+			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
+			if q.long {
+				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
+			}
+			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+			if f.FileType == fileinfo.TypeLink {
+				fmt.Printf(" -> %s", f.Special)
+			} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
+				fmt.Printf(" %s", f.Special)
+			}
+			fmt.Println("")
+			return nil
+		})
+
 	default:
 		return fmt.Errorf("no action specified; use %s --help for help", q.progName)
 	}

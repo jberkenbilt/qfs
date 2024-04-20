@@ -2,7 +2,6 @@ package scan
 
 import (
 	"fmt"
-	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
@@ -17,9 +16,6 @@ type Scan struct {
 	filters []*filter.Filter
 	sameDev bool
 	cleanup bool
-	db      string
-	stdout  bool
-	long    bool
 }
 
 func New(input string, options ...Options) (*Scan, error) {
@@ -55,22 +51,7 @@ func WithCleanup(cleanup bool) func(*Scan) error {
 	}
 }
 
-func WithDb(db string) func(*Scan) error {
-	return func(s *Scan) error {
-		s.db = db
-		return nil
-	}
-}
-
-func WithStdout(stdout bool, long bool) func(*Scan) error {
-	return func(s *Scan) error {
-		s.stdout = stdout
-		s.long = long
-		return nil
-	}
-}
-
-func (s *Scan) Run() error {
+func (s *Scan) Run() (fileinfo.Provider, error) {
 	progName := filepath.Base(os.Args[0])
 	files, err := traverse.Traverse(
 		s.input,
@@ -85,25 +66,7 @@ func (s *Scan) Run() error {
 		},
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if s.db != "" {
-		return database.WriteDb(s.db, files)
-	} else if s.stdout {
-		return files.ForEach(func(f *fileinfo.FileInfo) error {
-			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
-			if s.long {
-				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
-			}
-			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-			if f.FileType == fileinfo.TypeLink {
-				fmt.Printf(" -> %s", f.Special)
-			} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
-				fmt.Printf(" %s", f.Special)
-			}
-			fmt.Println("")
-			return nil
-		})
-	}
-	return nil
+	return files, nil
 }
