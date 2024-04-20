@@ -59,6 +59,7 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 		"exclude":      argDynamicFilter,
 		"prune":        argDynamicFilter,
 		"junk":         argDynamicFilter,
+		// XXX remember -f, -no-special, -no-dir
 	}
 	a := map[argTableIdx]map[string]argHandler{
 		atTop: {
