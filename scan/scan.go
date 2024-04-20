@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 )
 
-type Options func(*Scan) error
+type Options func(*Scan)
 
 type Scan struct {
 	input   string
@@ -24,31 +24,26 @@ func New(input string, options ...Options) (*Scan, error) {
 		input: input,
 	}
 	for _, fn := range options {
-		if err := fn(q); err != nil {
-			return nil, err
-		}
+		fn(q)
 	}
 	return q, nil
 }
 
-func WithFilters(filters []*filter.Filter) func(*Scan) error {
-	return func(s *Scan) error {
+func WithFilters(filters []*filter.Filter) func(*Scan) {
+	return func(s *Scan) {
 		s.filters = filters
-		return nil
 	}
 }
 
-func WithSameDev(sameDev bool) func(*Scan) error {
-	return func(s *Scan) error {
+func WithSameDev(sameDev bool) func(*Scan) {
+	return func(s *Scan) {
 		s.sameDev = sameDev
-		return nil
 	}
 }
 
-func WithCleanup(cleanup bool) func(*Scan) error {
-	return func(s *Scan) error {
+func WithCleanup(cleanup bool) func(*Scan) {
+	return func(s *Scan) {
 		s.cleanup = cleanup
-		return nil
 	}
 }
 

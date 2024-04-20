@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-type Qfs struct {
+type parser struct {
 	progName      string
 	argTable      argTableIdx
 	args          []string
@@ -36,7 +36,7 @@ type Qfs struct {
 
 const Version = "0.0"
 
-type argHandler func(*Qfs, string) error
+type argHandler func(*parser, string) error
 type argTableIdx int
 
 const (
@@ -82,7 +82,7 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 	return a
 }()
 
-func (q *Qfs) check() error {
+func (q *parser) check() error {
 	switch q.argTable {
 	case atTop:
 		return fmt.Errorf("run %s --help for help", q.progName)
@@ -94,7 +94,7 @@ func (q *Qfs) check() error {
 	return nil
 }
 
-func argHelp(q *Qfs, _ string) error {
+func argHelp(q *parser, _ string) error {
 	fmt.Printf(`
 Usage: %s
 
@@ -107,13 +107,13 @@ XXX
 	return nil
 }
 
-func argVersion(q *Qfs, _ string) error {
+func argVersion(q *parser, _ string) error {
 	fmt.Printf("%s version %s\n", q.progName, Version)
 	os.Exit(0)
 	return nil
 }
 
-func argSubcommand(q *Qfs, arg string) error {
+func argSubcommand(q *parser, arg string) error {
 	switch arg {
 	case "scan":
 		q.argTable = atScan
@@ -124,7 +124,7 @@ func argSubcommand(q *Qfs, arg string) error {
 	return nil
 }
 
-func argDir(q *Qfs, arg string) error {
+func argDir(q *parser, arg string) error {
 	if q.dir != "" {
 		return fmt.Errorf("at argument \"%s\": a directory has already been specified", arg)
 	}
@@ -132,7 +132,7 @@ func argDir(q *Qfs, arg string) error {
 	return nil
 }
 
-func argDb(q *Qfs, arg string) error {
+func argDb(q *parser, arg string) error {
 	if q.arg >= len(q.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
@@ -142,22 +142,22 @@ func argDb(q *Qfs, arg string) error {
 	return nil
 }
 
-func argLong(q *Qfs, _ string) error {
+func argLong(q *parser, _ string) error {
 	q.long = true
 	return nil
 }
 
-func argCleanup(q *Qfs, _ string) error {
+func argCleanup(q *parser, _ string) error {
 	q.cleanup = true
 	return nil
 }
 
-func argXDev(q *Qfs, _ string) error {
+func argXDev(q *parser, _ string) error {
 	q.sameDev = true
 	return nil
 }
 
-func argFilter(q *Qfs, arg string) error {
+func argFilter(q *parser, arg string) error {
 	if q.arg >= len(q.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
@@ -176,7 +176,7 @@ func argFilter(q *Qfs, arg string) error {
 	return nil
 }
 
-func argDynamicFilter(q *Qfs, arg string) error {
+func argDynamicFilter(q *parser, arg string) error {
 	if q.arg >= len(q.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
@@ -212,7 +212,7 @@ func argDynamicFilter(q *Qfs, arg string) error {
 	return nil
 }
 
-func (q *Qfs) handleArg(p *Qfs) error {
+func (q *parser) handleArg(p *parser) error {
 	var opt string
 	arg := p.args[p.arg]
 	p.arg++
@@ -238,7 +238,7 @@ func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
 	}
-	q := &Qfs{
+	q := &parser{
 		progName: filepath.Base(args[0]),
 		argTable: atTop,
 		args:     args[1:],
