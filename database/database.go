@@ -1,12 +1,98 @@
 package database
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"os"
 	"strconv"
 	"strings"
 )
+
+type Db struct {
+	filename string
+	format   dbFormat
+	lineNo   int
+	f        *os.File
+	r        *bufio.Scanner
+}
+
+type dbFormat int
+
+const (
+	dbQSync = iota
+	dbQfs
+)
+
+// Open opens an on-disk database. The resulting object is a fileinfo.Provider.
+// You must call Close on the database.
+func Open(filename string) (*Db, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("open database %s: %w", filename, err)
+	}
+	r := bufio.NewScanner(f)
+	db := &Db{
+		filename: filename,
+		f:        f,
+		r:        r,
+	}
+	var first string
+	if r.Scan() {
+		first = r.Text()
+		db.lineNo++
+	} else {
+		_ = f.Close()
+		if err := r.Err(); err != nil {
+			return nil, fmt.Errorf("%s: %w", filename, err)
+		}
+	}
+	if first == "QFS 1" {
+		db.format = dbQfs
+	} else if first == "SYNC_TOOLS_DB_VERSION 3" {
+		db.format = dbQSync
+	} else {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s is not a qfs database", filename)
+	}
+	return db, nil
+}
+
+func (db *Db) Close() error {
+	return db.f.Close()
+}
+
+func (db *Db) ForEach(func(*fileinfo.FileInfo) error) error {
+	for db.r.Scan() {
+		line := db.r.Text()
+		db.lineNo++
+		fields := strings.Split(line, "\x00")
+		switch db.format {
+		case dbQSync:
+			if err := db.handleQSync(fields); err != nil {
+				return err
+			}
+		case dbQfs:
+			if err := db.handleQfs(fields); err != nil {
+				return err
+			}
+		}
+	}
+	if err := db.r.Err(); err != nil {
+		return fmt.Errorf("%s: error after line %d: %w", db.filename, db.lineNo, err)
+	}
+	return nil
+}
+
+func (db *Db) handleQSync(fields []string) error {
+	fmt.Printf("XXX qsync %v\n", fields[1])
+	return nil // XXX
+}
+
+func (db *Db) handleQfs(fields []string) error {
+	fmt.Printf("XXX qfs %v\n", fields[0])
+	return nil // XXX
+}
 
 func commonPrefix(b1 []byte, b2 []byte) int {
 	n := min(len(b1), len(b2))

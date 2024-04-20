@@ -271,6 +271,7 @@ func Run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
+		defer func() { _ = files.Close() }()
 		if q.db != "" {
 			return database.WriteDb(q.db, files)
 		}

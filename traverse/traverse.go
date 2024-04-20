@@ -288,3 +288,8 @@ func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
 	}
 	return nil
 }
+
+// Close is needed by fileinfo.Provider
+func (r *Result) Close() error {
+	return nil
+}

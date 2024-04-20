@@ -27,5 +27,7 @@ type FileInfo struct {
 }
 
 type Provider interface {
+	// ForEach provides each FileInfo in lexical order by path.
 	ForEach(func(*FileInfo) error) error
+	Close() error
 }

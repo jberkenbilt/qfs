@@ -2,6 +2,7 @@ package scan
 
 import (
 	"fmt"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
@@ -51,20 +52,31 @@ func WithCleanup(cleanup bool) func(*Scan) error {
 	}
 }
 
+// Run scans the input source per the scanner's configuration. The caller must
+// call Close on the resulting provider.
 func (s *Scan) Run() (fileinfo.Provider, error) {
 	progName := filepath.Base(os.Args[0])
-	files, err := traverse.Traverse(
-		s.input,
-		s.filters,
-		s.sameDev,
-		s.cleanup,
-		func(msg string) {
-			_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", progName, msg)
-		},
-		func(err error) {
-			_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
-		},
-	)
+	st, err := os.Stat(s.input)
+	if err != nil {
+		return nil, err
+	}
+	var files fileinfo.Provider
+	if st.IsDir() {
+		files, err = traverse.Traverse(
+			s.input,
+			s.filters,
+			s.sameDev,
+			s.cleanup,
+			func(msg string) {
+				_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", progName, msg)
+			},
+			func(err error) {
+				_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
+			},
+		)
+	} else {
+		files, err = database.Open(s.input)
+	}
 	if err != nil {
 		return nil, err
 	}
