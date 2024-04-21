@@ -6,6 +6,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,6 +63,61 @@ func TestRoundTrip(t *testing.T) {
 	all2 := records
 	if !reflect.DeepEqual(all1, all2) {
 		t.Error("round trip failed")
+	}
+}
+
+func TestPartialFiles(t *testing.T) {
+	noSpecial := false
+	filesOnly := false
+	var expFileKeys []string
+	for i := range 3 {
+		if i == 1 {
+			filesOnly = true
+		}
+		if i == 2 {
+			noSpecial = true
+		}
+		db, err := database.Open(
+			"testdata/real.qfs",
+			database.WithFilesOnly(filesOnly),
+			database.WithNoSpecial(noSpecial),
+		)
+		check(t, err)
+		var fileKeys []string
+		sawSpecial := false
+		sawDir := false
+		err = db.ForEach(func(f *fileinfo.FileInfo) error {
+			switch f.FileType {
+			case fileinfo.TypeBlockDev:
+				sawSpecial = true
+			case fileinfo.TypeCharDev:
+				sawSpecial = true
+			case fileinfo.TypeSocket:
+				sawSpecial = true
+			case fileinfo.TypePipe:
+				sawSpecial = true
+			case fileinfo.TypeDirectory:
+				sawDir = true
+			default:
+				fileKeys = append(fileKeys, f.Path)
+			}
+			return nil
+		})
+		check(t, err)
+		if i == 0 {
+			expFileKeys = fileKeys
+		} else {
+			if !slices.Equal(expFileKeys, fileKeys) {
+				t.Errorf("saw wrong keys")
+			}
+		}
+		if sawDir == filesOnly {
+			t.Errorf("saw unexpected directories")
+		}
+		if sawSpecial == (noSpecial || filesOnly) {
+			t.Error("saw unexpected special files")
+		}
+		_ = db.Close()
 	}
 }
 

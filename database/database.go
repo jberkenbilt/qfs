@@ -215,7 +215,25 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 		}
 		db.lastFields = fields
 		if f != nil {
-			if included, _ := filter.IsIncluded(f.Path, db.filters...); included {
+			included, _ := filter.IsIncluded(f.Path, db.filters...)
+			if included && (db.filesOnly || db.noSpecial) {
+				switch f.FileType {
+				case fileinfo.TypeBlockDev:
+					included = false
+				case fileinfo.TypeCharDev:
+					included = false
+				case fileinfo.TypeSocket:
+					included = false
+				case fileinfo.TypePipe:
+					included = false
+				case fileinfo.TypeDirectory:
+					if db.filesOnly {
+						included = false
+					}
+				default:
+				}
+			}
+			if included {
 				err = fn(f)
 				if err != nil {
 					return fmt.Errorf("%s at offset %d: %w", db.filename, db.lastOffset, err)
