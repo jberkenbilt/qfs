@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jberkenbilt/qfs/database"
+	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/scan"
@@ -19,7 +20,8 @@ type parser struct {
 	args          []string
 	arg           int
 	action        actionKey
-	dir           string
+	input1        string
+	input2        string
 	filters       []*filter.Filter
 	dynamicFilter *filter.Filter
 	db            string
@@ -28,6 +30,9 @@ type parser struct {
 	sameDev       bool
 	filesOnly     bool
 	noSpecial     bool
+	noDirTimes    bool
+	noOwnerships  bool
+	checks        bool
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -44,6 +49,7 @@ type argTableIdx int
 const (
 	atTop argTableIdx = iota
 	atScan
+	atDiff
 )
 
 type actionKey int
@@ -51,6 +57,7 @@ type actionKey int
 const (
 	actNone actionKey = iota
 	actScan
+	actDiff
 )
 
 var argTables = func() map[argTableIdx]map[string]argHandler {
@@ -77,8 +84,14 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 			"cleanup": argCleanup,
 			"xdev":    argXDev,
 		},
+		atDiff: {
+			"":              argDiffPositional,
+			"no-dir-times":  argNoDirTimes,
+			"no-ownerships": argNoOwnerships,
+			"checks":        argChecks,
+		},
 	}
-	for _, i := range []argTableIdx{atScan} {
+	for _, i := range []argTableIdx{atScan, atDiff} {
 		for arg, fn := range filterArgs {
 			a[i][arg] = fn
 		}
@@ -86,13 +99,17 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 	return a
 }()
 
-func (q *parser) check() error {
-	switch q.argTable {
+func (p *parser) check() error {
+	switch p.argTable {
 	case atTop:
-		return fmt.Errorf("run %s --help for help", q.progName)
+		return fmt.Errorf("run %s --help for help", p.progName)
 	case atScan:
-		if q.dir == "" {
-			return errors.New("scan requires a directory")
+		if p.input1 == "" {
+			return errors.New("scan requires an input")
+		}
+	case atDiff:
+		if p.input2 == "" {
+			return errors.New("diff requires two inputs")
 		}
 	}
 	return nil
@@ -122,6 +139,9 @@ func argSubcommand(q *parser, arg string) error {
 	case "scan":
 		q.argTable = atScan
 		q.action = actScan
+	case "diff":
+		q.argTable = atDiff
+		q.action = actDiff
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -138,11 +158,38 @@ func argNoSpecial(q *parser, _ string) error {
 	return nil
 }
 
+func argNoDirTimes(q *parser, _ string) error {
+	q.noDirTimes = true
+	return nil
+}
+
+func argNoOwnerships(q *parser, _ string) error {
+	q.noOwnerships = true
+	return nil
+}
+
+func argChecks(q *parser, _ string) error {
+	q.checks = true
+	return nil
+}
+
 func argScanPositional(q *parser, arg string) error {
-	if q.dir != "" {
-		return fmt.Errorf("at argument \"%s\": a directory has already been specified", arg)
+	if q.input1 != "" {
+		return fmt.Errorf("at argument \"%s\": an input has already been specified", arg)
 	}
-	q.dir = arg
+	q.input1 = arg
+	return nil
+}
+
+func argDiffPositional(q *parser, arg string) error {
+	if q.input2 != "" {
+		return fmt.Errorf("at argument \"%s\": inputs have already been specified", arg)
+	}
+	if q.input1 != "" {
+		q.input2 = arg
+	} else {
+		q.input1 = arg
+	}
 	return nil
 }
 
@@ -226,7 +273,7 @@ func argDynamicFilter(q *parser, arg string) error {
 	return nil
 }
 
-func (q *parser) handleArg(p *parser) error {
+func (p *parser) handleArg() error {
 	var opt string
 	arg := p.args[p.arg]
 	p.arg++
@@ -248,6 +295,68 @@ func (q *parser) handleArg(p *parser) error {
 	return handler(p, opt)
 }
 
+func (p *parser) doScan() error {
+	scanner, err := scan.New(
+		p.input1,
+		scan.WithFilters(p.filters),
+		scan.WithSameDev(p.sameDev),
+		scan.WithCleanup(p.cleanup),
+		scan.WithFilesOnly(p.filesOnly),
+		scan.WithNoSpecial(p.noSpecial),
+	)
+	if err != nil {
+		return fmt.Errorf("create scanner: %w", err)
+	}
+	files, err := scanner.Run()
+	if err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+	defer func() { _ = files.Close() }()
+	if p.db != "" {
+		return database.WriteDb(p.db, files)
+	}
+	return files.ForEach(func(f *fileinfo.FileInfo) error {
+		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
+		if p.long {
+			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
+		}
+		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+		if f.FileType == fileinfo.TypeLink {
+			fmt.Printf(" -> %s", f.Special)
+		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
+			fmt.Printf(" %s", f.Special)
+		}
+		fmt.Println("")
+		return nil
+	})
+}
+
+func (p *parser) doDiff() error {
+	d, err := diff.New(
+		p.input1,
+		p.input2,
+		diff.WithFilters(p.filters),
+		diff.WithFilesOnly(p.filesOnly),
+		diff.WithNoSpecial(p.noSpecial),
+		diff.WithNoDirTimes(p.noDirTimes),
+		diff.WithNoOwnerships(p.noOwnerships),
+		diff.WithChecks(p.checks),
+	)
+	if err != nil {
+		return fmt.Errorf("create diff: %w", err)
+	}
+	r, err := d.Run()
+	if err != nil {
+		return fmt.Errorf("diff: %w", err)
+	}
+	err = r.WriteDiff(os.Stdout)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
@@ -260,7 +369,7 @@ func Run(args []string) error {
 		action:   actNone,
 	}
 	for q.arg < len(q.args) {
-		if err := q.handleArg(q); err != nil {
+		if err := q.handleArg(); err != nil {
 			return err
 		}
 	}
@@ -272,40 +381,9 @@ func Run(args []string) error {
 	}
 	switch q.action {
 	case actScan:
-		scanner, err := scan.New(
-			q.dir,
-			scan.WithFilters(q.filters),
-			scan.WithSameDev(q.sameDev),
-			scan.WithCleanup(q.cleanup),
-			scan.WithFilesOnly(q.filesOnly),
-			scan.WithNoSpecial(q.noSpecial),
-		)
-		if err != nil {
-			return fmt.Errorf("crate scanner: %w", err)
-		}
-		files, err := scanner.Run()
-		if err != nil {
-			return fmt.Errorf("scan: %w", err)
-		}
-		defer func() { _ = files.Close() }()
-		if q.db != "" {
-			return database.WriteDb(q.db, files)
-		}
-		return files.ForEach(func(f *fileinfo.FileInfo) error {
-			fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
-			if q.long {
-				fmt.Printf(" %05d %05d", f.Uid, f.Gid)
-			}
-			fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-			if f.FileType == fileinfo.TypeLink {
-				fmt.Printf(" -> %s", f.Special)
-			} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
-				fmt.Printf(" %s", f.Special)
-			}
-			fmt.Println("")
-			return nil
-		})
-
+		return q.doScan()
+	case actDiff:
+		return q.doDiff()
 	default:
 		return fmt.Errorf("no action specified; use %s --help for help", q.progName)
 	}
