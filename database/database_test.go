@@ -30,7 +30,7 @@ func TestRoundTrip(t *testing.T) {
 	j := func(path string) string {
 		return filepath.Join(tmp, path)
 	}
-	db1, err := database.Open("testdata/real.qsync", nil)
+	db1, err := database.Open("testdata/real.qsync")
 	check(t, err)
 	defer func() { _ = db1.Close() }()
 	err = database.WriteDb("/does/not/exist", db1)
@@ -39,7 +39,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 	err = database.WriteDb(j("qsync-to-qfs"), db1)
 	check(t, err)
-	db2, err := database.Open(j("qsync-to-qfs"), nil)
+	db2, err := database.Open(j("qsync-to-qfs"))
 	check(t, err)
 	defer func() { _ = db2.Close() }()
 	var records []*fileinfo.FileInfo
@@ -82,7 +82,7 @@ func TestErrors(t *testing.T) {
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
 			err := func() error {
-				db, err := database.Open(filename, nil)
+				db, err := database.Open(filename)
 				if err != nil {
 					return err
 				}

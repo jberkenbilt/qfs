@@ -17,9 +17,10 @@ import (
 	"time"
 )
 
+type Options func(*Db)
+
 type Db struct {
 	filename   string
-	filters    []*filter.Filter
 	format     dbFormat
 	f          *os.File
 	r          *bufio.Reader
@@ -27,6 +28,9 @@ type Db struct {
 	nextOffset uint64
 	lastRow    []byte
 	lastFields []string
+	filters    []*filter.Filter
+	filesOnly  bool
+	noSpecial  bool
 }
 
 type dbFormat int
@@ -40,24 +44,44 @@ var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
 
 // Open opens an on-disk database. The resulting object is a fileinfo.Provider.
 // You must call Close on the database.
-func Open(filename string, filters []*filter.Filter) (*Db, error) {
+func Open(filename string, options ...Options) (*Db, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", filename, err)
 	}
 	db := &Db{
 		filename: filename,
-		filters:  filters,
 		f:        f,
 	}
-	if err := db.Rewind(); err != nil {
+	if err := db.rewind(); err != nil {
 		_ = f.Close()
 		return nil, err
+	}
+	for _, fn := range options {
+		fn(db)
 	}
 	return db, nil
 }
 
-func (db *Db) Rewind() error {
+func WithFilters(filters []*filter.Filter) func(*Db) {
+	return func(db *Db) {
+		db.filters = filters
+	}
+}
+
+func WithFilesOnly(filesOnly bool) func(*Db) {
+	return func(db *Db) {
+		db.filesOnly = filesOnly
+	}
+}
+
+func WithNoSpecial(noSpecial bool) func(*Db) {
+	return func(db *Db) {
+		db.noSpecial = noSpecial
+	}
+}
+
+func (db *Db) rewind() error {
 	_, err := db.f.Seek(0, io.SeekStart)
 	if err != nil {
 		// TEST: NOT COVERED
@@ -165,7 +189,7 @@ func (db *Db) getRow() ([]byte, error) {
 
 func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 	if db.lastRow != nil {
-		if err := db.Rewind(); err != nil {
+		if err := db.rewind(); err != nil {
 			// TEST: NOT COVERED
 			return err
 		}
