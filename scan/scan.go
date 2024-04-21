@@ -13,10 +13,12 @@ import (
 type Options func(*Scan)
 
 type Scan struct {
-	input   string
-	filters []*filter.Filter
-	sameDev bool
-	cleanup bool
+	input     string
+	filters   []*filter.Filter
+	sameDev   bool
+	cleanup   bool
+	filesOnly bool
+	noSpecial bool
 }
 
 func New(input string, options ...Options) (*Scan, error) {
@@ -47,6 +49,18 @@ func WithCleanup(cleanup bool) func(*Scan) {
 	}
 }
 
+func WithNoSpecial(noSpecial bool) func(*Scan) {
+	return func(s *Scan) {
+		s.noSpecial = noSpecial
+	}
+}
+
+func WithFilesOnly(filesOnly bool) func(*Scan) {
+	return func(s *Scan) {
+		s.filesOnly = filesOnly
+	}
+}
+
 // Run scans the input source per the scanner's configuration. The caller must
 // call Close on the resulting provider.
 func (s *Scan) Run() (fileinfo.Provider, error) {
@@ -57,11 +71,19 @@ func (s *Scan) Run() (fileinfo.Provider, error) {
 	}
 	var files fileinfo.Provider
 	if st.IsDir() {
-		files, err = traverse.Traverse(
+		var tr *traverse.Traverser
+		tr, err = traverse.New(
 			s.input,
-			s.filters,
-			s.sameDev,
-			s.cleanup,
+			traverse.WithFilters(s.filters),
+			traverse.WithSameDev(s.sameDev),
+			traverse.WithCleanup(s.cleanup),
+			traverse.WithFilesOnly(s.filesOnly),
+			traverse.WithNoSpecial(s.noSpecial),
+		)
+		if err != nil {
+			return nil, err
+		}
+		files, err = tr.Traverse(
 			func(msg string) {
 				_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", progName, msg)
 			},

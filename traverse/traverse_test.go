@@ -80,7 +80,11 @@ func TestTraverse(t *testing.T) {
 	notifyFn := func(msg string) {
 		messages = append(messages, msg)
 	}
-	files, err := traverse.Traverse(tmp, nil, false, false, notifyFn, errFn)
+	tr, err := traverse.New(tmp)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	files, err := tr.Traverse(notifyFn, errFn)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -139,7 +143,11 @@ func TestTraverse(t *testing.T) {
 	}()
 	_ = os.Chmod(j("one/two"), 0)
 	_ = os.Chmod(j("baa"), 0)
-	files, err = traverse.Traverse(tmp, nil, false, false, notifyFn, errFn)
+	tr, err = traverse.New(tmp)
+	if err != nil {
+		t.Errorf("error returned: %v", err)
+	}
+	files, err = tr.Traverse(notifyFn, errFn)
 	if err != nil {
 		t.Errorf("error returned: %v", err)
 	}
@@ -174,16 +182,19 @@ func TestTraverse(t *testing.T) {
 }
 
 func TestDevices(t *testing.T) {
-	files, err := traverse.Traverse(
+	tr, err := traverse.New(
 		"/dev",
-		nil,
-		true,
-		false,
+		traverse.WithSameDev(true),
+	)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	files, err := tr.Traverse(
 		func(string) {},
 		func(error) {},
 	)
 	if err != nil {
-		t.Fatal("can't traverse /dev")
+		t.Fatalf("can't traverse /dev: %v", err)
 	}
 	foundChar := false
 	foundBlock := false
@@ -209,17 +220,8 @@ func TestDevices(t *testing.T) {
 }
 
 func TestNoRoot(t *testing.T) {
-	_, err := traverse.Traverse(
+	_, err := traverse.New(
 		"/does-not-exist",
-		nil,
-		false,
-		false,
-		func(string) {
-			t.Errorf("unexpected notification")
-		},
-		func(error) {
-			t.Errorf("unexpected error")
-		},
 	)
 	if err == nil || !strings.HasPrefix(err.Error(), "lstat /does-not-exist:") {
 		t.Errorf("wrong error: %v", err)
@@ -258,11 +260,15 @@ func TestFilterInteraction(t *testing.T) {
 	check(os.Chmod(j("three/four"), 0555))
 	var messages []string
 	var allErrors []string
-	files, err := traverse.Traverse(
+	tr, err := traverse.New(
 		tmp,
-		[]*filter.Filter{f},
-		false,
-		true,
+		traverse.WithFilters([]*filter.Filter{f}),
+		traverse.WithCleanup(true),
+	)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	files, err := tr.Traverse(
 		func(msg string) {
 			messages = append(messages, msg)
 		},

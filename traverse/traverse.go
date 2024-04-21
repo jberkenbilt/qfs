@@ -19,6 +19,10 @@ import (
 	"time"
 )
 
+var numWorkers = 5 * runtime.NumCPU()
+
+type Options func(*Traverser)
+
 type Result struct {
 	tree *treeNode
 }
@@ -38,18 +42,20 @@ type treeNode struct {
 	included    bool
 }
 
-type traverser struct {
+type Traverser struct {
 	root       string
-	rootDev    uint64
-	filters    []*filter.Filter
-	xDev       bool
-	cleanup    bool
 	errChan    chan error
 	notifyChan chan string
 	workChan   chan *treeNode
 	pending    atomic.Int64
 	zero       chan struct{}
 	q          *queue.Queue[*treeNode]
+	rootDev    uint64
+	filters    []*filter.Filter
+	sameDev    bool
+	cleanup    bool
+	filesOnly  bool
+	noSpecial  bool
 }
 
 func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
@@ -71,7 +77,7 @@ func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
 	}
 }
 
-func (tr *traverser) getFileInfo(node *treeNode) error {
+func (tr *Traverser) getFileInfo(node *treeNode) error {
 	path := filepath.Join(tr.root, node.path)
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
@@ -129,7 +135,7 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 			// Don't traverse into pruned directories
 			break
 		}
-		if tr.xDev && st != nil && tr.rootDev != st.Dev {
+		if tr.sameDev && st != nil && tr.rootDev != st.Dev {
 			// TEST: CAN'T COVER. This is on a different device. Exclude and don't traverse
 			// into it. This is not exercised in the test suite as it is difficult without
 			// root/admin privileges to construct a scenario where crossing device boundaries
@@ -152,7 +158,7 @@ func (tr *traverser) getFileInfo(node *treeNode) error {
 	return nil
 }
 
-func (tr *traverser) worker() {
+func (tr *Traverser) worker() {
 	for node := range tr.workChan {
 		if err := tr.getFileInfo(node); err != nil {
 			tr.errChan <- err
@@ -167,7 +173,7 @@ func (tr *traverser) worker() {
 	}
 }
 
-func (tr *traverser) getWork() []*treeNode {
+func (tr *Traverser) getWork() []*treeNode {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c := make(chan []*treeNode, 1)
@@ -182,7 +188,7 @@ func (tr *traverser) getWork() []*treeNode {
 	}
 }
 
-func (tr *traverser) traverse(node *treeNode) {
+func (tr *Traverser) traverse(node *treeNode) {
 	toDo := []*treeNode{node}
 	tr.pending.Add(1)
 	for toDo != nil {
@@ -193,27 +199,9 @@ func (tr *traverser) traverse(node *treeNode) {
 	}
 }
 
-// Traverse traverses a file system starting from to given path and returns a
-// FileInfo, which represents a tree of the file system. Call the Flatten method
-// on the resulting FileInfo to walk through all the items included by the
-// filters. Note that a specific FileInfo has an Included field indicating
-// whether the item is included. Pruned directories' children are not included,
-// but regular excluded directories are present in case they have included
-// children.
-func Traverse(
-	root string,
-	filters []*filter.Filter,
-	xDev bool,
-	cleanup bool,
-	notifyFn func(string),
-	errFn func(error),
-) (*Result, error) {
-	numWorkers := 5 * runtime.NumCPU()
-	tr := &traverser{
+func New(root string, options ...Options) (*Traverser, error) {
+	tr := &Traverser{
 		root:       root,
-		filters:    filters,
-		xDev:       xDev,
-		cleanup:    cleanup,
 		errChan:    make(chan error, numWorkers),
 		notifyChan: make(chan string, numWorkers),
 		workChan:   make(chan *treeNode, numWorkers),
@@ -229,7 +217,54 @@ func Traverse(
 	if ok && st != nil {
 		tr.rootDev = st.Dev
 	}
+	for _, fn := range options {
+		fn(tr)
+	}
+	return tr, nil
+}
 
+func WithFilters(filters []*filter.Filter) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.filters = filters
+	}
+}
+
+func WithSameDev(sameDev bool) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.sameDev = sameDev
+	}
+}
+
+func WithCleanup(cleanup bool) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.cleanup = cleanup
+	}
+}
+
+func WithFilesOnly(filesOnly bool) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.filesOnly = filesOnly
+	}
+}
+
+func WithNoSpecial(noSpecial bool) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.noSpecial = noSpecial
+	}
+}
+
+// Traverse traverses a file system starting from to given path and returns a
+// FileInfo, which represents a tree of the file system. Call the Flatten method
+// on the resulting FileInfo to walk through all the items included by the
+// filters. Note that a specific FileInfo has an Included field indicating
+// whether the item is included. Pruned directories' children are not included,
+// but regular excluded directories are present in case they have included
+// children.
+func (tr *Traverser) Traverse(
+	notifyFn func(string),
+	errFn func(error),
+) (*Result, error) {
+	numWorkers := 5 * runtime.NumCPU()
 	var workerWait sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		workerWait.Add(1)

@@ -26,6 +26,8 @@ type parser struct {
 	long          bool
 	cleanup       bool
 	sameDev       bool
+	filesOnly     bool
+	noSpecial     bool
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -59,7 +61,8 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 		"exclude":      argDynamicFilter,
 		"prune":        argDynamicFilter,
 		"junk":         argDynamicFilter,
-		// XXX remember -f, -no-special, -no-dir
+		"f":            argFilesOnly,
+		"no-special":   argNoSpecial,
 	}
 	a := map[argTableIdx]map[string]argHandler{
 		atTop: {
@@ -68,7 +71,7 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 			"version": argVersion,
 		},
 		atScan: {
-			"":        argDir,
+			"":        argScanPositional,
 			"long":    argLong,
 			"db":      argDb,
 			"cleanup": argCleanup,
@@ -125,7 +128,17 @@ func argSubcommand(q *parser, arg string) error {
 	return nil
 }
 
-func argDir(q *parser, arg string) error {
+func argFilesOnly(q *parser, _ string) error {
+	q.filesOnly = true
+	return nil
+}
+
+func argNoSpecial(q *parser, _ string) error {
+	q.noSpecial = true
+	return nil
+}
+
+func argScanPositional(q *parser, arg string) error {
 	if q.dir != "" {
 		return fmt.Errorf("at argument \"%s\": a directory has already been specified", arg)
 	}
@@ -264,6 +277,8 @@ func Run(args []string) error {
 			scan.WithFilters(q.filters),
 			scan.WithSameDev(q.sameDev),
 			scan.WithCleanup(q.cleanup),
+			scan.WithFilesOnly(q.filesOnly),
+			scan.WithNoSpecial(q.noSpecial),
 		)
 		if err != nil {
 			return fmt.Errorf("crate scanner: %w", err)
