@@ -137,10 +137,11 @@ func TestTraverse(t *testing.T) {
 		all["one"].FileType == fileinfo.TypeDirectory) {
 		t.Errorf("wrong file types")
 	}
-	defer func() {
+	restorePerms := func() {
 		_ = os.Chmod(j("one/two"), 0755)
 		_ = os.Chmod(j("baa"), 0644)
-	}()
+	}
+	defer restorePerms()
 	_ = os.Chmod(j("one/two"), 0)
 	_ = os.Chmod(j("baa"), 0)
 	tr, err = traverse.New(tmp)
@@ -179,43 +180,77 @@ func TestTraverse(t *testing.T) {
 	if !slices.Equal(expKeys, keys) {
 		t.Errorf("wrong entries: %#v", keys)
 	}
+
+	restorePerms()
+	allErrors = nil
+	messages = nil
+	tr, err = traverse.New(tmp, traverse.WithFilesOnly(true))
+	if err != nil {
+		t.Errorf("error returned: %v", err)
+	}
+	files, err = tr.Traverse(notifyFn, errFn)
+	if err != nil {
+		t.Errorf("error returned: %v", err)
+	}
+	if len(allErrors) > 0 {
+		t.Errorf("got errors: %#v", allErrors)
+	}
+	if len(messages) > 0 {
+		t.Errorf("got messages: %#v", messages)
+	}
+	maps.Clear(all)
+	keys = nil
+	_ = files.ForEach(fn)
+	expKeys = []string{
+		"potato",
+		"quack",
+		"baa",
+		"one/two/moo",
+	}
+	sort.Strings(expKeys)
+	if !slices.Equal(expKeys, keys) {
+		t.Errorf("wrong entries: %#v", keys)
+	}
 }
 
 func TestDevices(t *testing.T) {
-	tr, err := traverse.New(
-		"/dev",
-		traverse.WithSameDev(true),
-	)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	files, err := tr.Traverse(
-		func(string) {},
-		func(error) {},
-	)
-	if err != nil {
-		t.Fatalf("can't traverse /dev: %v", err)
-	}
-	foundChar := false
-	foundBlock := false
-	_ = files.ForEach(func(f *fileinfo.FileInfo) error {
-		if f.FileType == fileinfo.TypeCharDev {
-			foundChar = true
+	for _, noSpecial := range []bool{false, true} {
+		tr, err := traverse.New(
+			"/dev",
+			traverse.WithSameDev(true),
+			traverse.WithNoSpecial(noSpecial),
+		)
+		if err != nil {
+			t.Fatal(err.Error())
 		}
-		if f.FileType == fileinfo.TypeBlockDev {
-			foundBlock = true
+		files, err := tr.Traverse(
+			func(string) {},
+			func(error) {},
+		)
+		if err != nil {
+			t.Fatalf("can't traverse /dev: %v", err)
 		}
-		if foundBlock && foundChar {
-			// Stop traversing -- we got what we need
-			return errors.New("stop")
+		foundChar := false
+		foundBlock := false
+		_ = files.ForEach(func(f *fileinfo.FileInfo) error {
+			if f.FileType == fileinfo.TypeCharDev {
+				foundChar = true
+			}
+			if f.FileType == fileinfo.TypeBlockDev {
+				foundBlock = true
+			}
+			if foundBlock && foundChar {
+				// Stop traversing -- we got what we need
+				return errors.New("stop")
+			}
+			return nil
+		})
+		if foundChar == noSpecial {
+			t.Errorf("didn't find any character devices")
 		}
-		return nil
-	})
-	if !foundChar {
-		t.Errorf("didn't find any character devices")
-	}
-	if !foundBlock {
-		t.Errorf("didn't find any block devices")
+		if foundBlock == noSpecial {
+			t.Errorf("didn't find any block devices")
+		}
 	}
 }
 

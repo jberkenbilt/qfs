@@ -99,6 +99,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 		node.minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
 	}
 	modeType := mode.Type()
+	isSpecial := false
 	switch {
 	case mode.IsRegular():
 		node.fileType = fileinfo.TypeFile
@@ -112,14 +113,17 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 			}
 		}
 	case modeType&os.ModeDevice != 0:
+		isSpecial = true
 		if modeType&os.ModeCharDevice != 0 {
 			node.fileType = fileinfo.TypeCharDev
 		} else {
 			node.fileType = fileinfo.TypeBlockDev
 		}
 	case modeType&os.ModeSocket != 0:
+		isSpecial = true
 		node.fileType = fileinfo.TypeSocket
 	case modeType&os.ModeNamedPipe != 0:
+		isSpecial = true
 		node.fileType = fileinfo.TypePipe
 	case modeType&os.ModeSymlink != 0:
 		node.fileType = fileinfo.TypeLink
@@ -154,6 +158,13 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 		for _, e := range entries {
 			node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e.Name())})
 		}
+	}
+	if isSpecial && (tr.noSpecial || tr.filesOnly) {
+		node.included = false
+	}
+	if node.fileType == fileinfo.TypeDirectory && tr.filesOnly {
+		// Special are excluded above, and links are included with filesOnly.
+		node.included = false
 	}
 	return nil
 }
