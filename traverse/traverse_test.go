@@ -327,8 +327,8 @@ func TestFilterInteraction(t *testing.T) {
 		"two/712818281828459045",
 	}
 	expMessages := []string{
-		"removing: two/pie~",
-		"removing: three/1416~",
+		"removing two/pie~",
+		"removing three/1416~",
 	}
 	sort.Strings(expPaths)
 	sort.Strings(expMessages)

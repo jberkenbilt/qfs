@@ -285,6 +285,7 @@ func (p *parser) handleArg() error {
 	handler, ok := argTables[p.argTable][opt]
 	if !ok {
 		if opt == "" {
+			// TEST: NOT COVERED. All our subcommands accept positional arguments.
 			return fmt.Errorf("unexpected positional argument \"%s\"", arg)
 		}
 		return fmt.Errorf("unknown option \"%s\"", arg)
@@ -305,6 +306,7 @@ func (p *parser) doScan() error {
 		scan.WithNoSpecial(p.noSpecial),
 	)
 	if err != nil {
+		// TEST: NOT COVERED. scan.New never returns an error.
 		return fmt.Errorf("create scanner: %w", err)
 	}
 	files, err := scanner.Run()
@@ -343,6 +345,7 @@ func (p *parser) doDiff() error {
 		diff.WithChecks(p.checks),
 	)
 	if err != nil {
+		// TEST: NOT COVERED. diff.New never returns an error.
 		return fmt.Errorf("create diff: %w", err)
 	}
 	r, err := d.Run()
@@ -351,6 +354,7 @@ func (p *parser) doDiff() error {
 	}
 	err = r.WriteDiff(os.Stdout)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 

@@ -88,7 +88,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 		// in its directory but can't lstat, so this is not exercised.
 		return fmt.Errorf("lstat %s: %w", path, err)
 	}
-	node.modTime = lst.ModTime()
+	node.modTime = lst.ModTime().Truncate(time.Millisecond)
 	mode := lst.Mode()
 	node.permissions = uint16(mode.Perm())
 	st, ok := lst.Sys().(*syscall.Stat_t)
@@ -109,7 +109,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 			if err = os.Remove(filepath.Join(tr.root, node.path)); err != nil {
 				return fmt.Errorf("remove junk %s: %w", path, err)
 			} else {
-				tr.notifyChan <- fmt.Sprintf("removing: %s", node.path)
+				tr.notifyChan <- fmt.Sprintf("removing %s", node.path)
 			}
 		}
 	case modeType&os.ModeDevice != 0:

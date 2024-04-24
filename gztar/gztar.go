@@ -26,6 +26,7 @@ func Extract(filename string, dest string) error {
 	}
 	archive := tar.NewReader(gz)
 	dirTimes := map[string]time.Time{}
+	dirModes := map[string]os.FileMode{}
 	for {
 		h, err := archive.Next()
 		if h == nil || errors.Is(err, io.EOF) {
@@ -39,18 +40,19 @@ func Extract(filename string, dest string) error {
 		perm := mode.Perm()
 		name := filepath.Join(dest, h.Name)
 		if strings.HasSuffix(h.Name, "/") {
-			if err := os.MkdirAll(name, perm); err != nil {
+			if err := os.MkdirAll(name, 0777); err != nil {
 				return err
 			}
 			dirTimes[name] = h.ModTime
+			dirModes[name] = perm
 		} else {
 			dir := filepath.Dir(name)
-			if err := os.MkdirAll(dir, 0777); err != nil {
+			if err := os.MkdirAll(dir, 0700); err != nil {
 				return err
 			}
 			switch {
 			case mode.IsRegular():
-				f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, perm)
+				f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0600)
 				if err != nil {
 					return err
 				}
@@ -59,11 +61,20 @@ func Extract(filename string, dest string) error {
 				if err != nil || err2 != nil {
 					return errors.Join(err, err2)
 				}
+				if err := os.Chmod(name, perm); err != nil {
+					return err
+				}
 				if err := os.Chtimes(name, time.Time{}, h.ModTime); err != nil {
 					return err
 				}
 			case modeType&os.ModeNamedPipe != 0:
 				if err := syscall.Mkfifo(name, uint32(perm)); err != nil {
+					return err
+				}
+				if err := os.Chmod(name, perm); err != nil {
+					return err
+				}
+				if err := os.Chtimes(name, time.Time{}, h.ModTime); err != nil {
 					return err
 				}
 			case modeType&os.ModeSymlink != 0:
@@ -79,6 +90,9 @@ func Extract(filename string, dest string) error {
 	sort.Strings(dirs)
 	slices.Reverse(dirs)
 	for _, dir := range dirs {
+		if err := os.Chmod(dir, dirModes[dir]); err != nil {
+			return err
+		}
 		if err := os.Chtimes(dir, time.Time{}, dirTimes[dir]); err != nil {
 			return err
 		}

@@ -93,6 +93,7 @@ func (d *Diff) Run() (*Result, error) {
 		scan.WithNoSpecial(d.noSpecial),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return nil, err
 	}
 	s2, err := scan.New(
@@ -102,6 +103,7 @@ func (d *Diff) Run() (*Result, error) {
 		scan.WithNoSpecial(d.noSpecial),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return nil, err
 	}
 	files1, err := s1.Run()
@@ -117,6 +119,7 @@ func (d *Diff) Run() (*Result, error) {
 	r := &Result{}
 	err = d.diff(r, files1, files2)
 	if err != nil {
+		// TEST: NOT COVERED
 		return nil, err
 	}
 	return r, nil
@@ -138,6 +141,7 @@ func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
 		return nil
 	})
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	err = files2.ForEach(func(f *fileinfo.FileInfo) error {
@@ -145,6 +149,7 @@ func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
 		return nil
 	})
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	paths := maps.Keys(work)
@@ -231,12 +236,17 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 				)
 			}
 			if !d.noOwnerships {
-				oldOwner := fmt.Sprintf("%d:%d", data.fOld.Uid, data.fOld.Gid)
-				newOwner := fmt.Sprintf("%d:%d", data.fNew.Uid, data.fNew.Gid)
-				if oldOwner != newOwner {
+				change := ":"
+				if data.fOld.Uid != data.fNew.Uid {
+					change = fmt.Sprintf("%d:", data.fNew.Uid)
+				}
+				if data.fOld.Gid != data.fNew.Gid {
+					change = fmt.Sprintf("%s%d", change, data.fNew.Gid)
+				}
+				if change != ":" {
 					r.MetaChange = append(
 						r.MetaChange,
-						fmt.Sprintf("chown %s %s", newOwner, path),
+						fmt.Sprintf("chown %s %s", change, path),
 					)
 				}
 			}
@@ -247,16 +257,19 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 func (r *Result) WriteDiff(f *os.File) error {
 	for _, m := range r.Check {
 		if _, err := fmt.Fprintf(f, "check %s\n", m); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 	for _, m := range r.TypeChange {
 		if _, err := fmt.Fprintf(f, "typechange %s\n", m); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 	for _, m := range r.Rm {
 		if _, err := fmt.Fprintf(f, "rm %s\n", m); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
@@ -268,16 +281,19 @@ func (r *Result) WriteDiff(f *os.File) error {
 			cmd = "add"
 		}
 		if _, err := fmt.Fprintf(f, "%s %s\n", cmd, m.Path); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 	for _, m := range r.Change {
 		if _, err := fmt.Fprintf(f, "change %s\n", m.Path); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 	for _, m := range r.MetaChange {
 		if _, err := fmt.Fprintf(f, "%s\n", m); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
