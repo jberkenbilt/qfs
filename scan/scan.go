@@ -81,6 +81,8 @@ func (s *Scan) Run() (fileinfo.Provider, error) {
 			traverse.WithNoSpecial(s.noSpecial),
 		)
 		if err != nil {
+			// TEST: NOT COVERED. By this point, any error returned by Traverse has already
+			// been caught.
 			return nil, err
 		}
 		files, err = tr.Traverse(

@@ -27,37 +27,48 @@ func check(t *testing.T, err error) {
 	}
 }
 
-func withStdout(fn func()) []byte {
+func withStdout(fn func()) ([]byte, []byte) {
 	originalStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	var buf bytes.Buffer
+	originalStderr := os.Stderr
+	r1, w1, _ := os.Pipe()
+	os.Stdout = w1
+	r2, w2, _ := os.Pipe()
+	os.Stderr = w2
+	var buf1, buf2 bytes.Buffer
 	done := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(&buf, r)
-		_ = r.Close()
+		_, _ = io.Copy(&buf1, r1)
+		_ = r1.Close()
+		_, _ = io.Copy(&buf2, r2)
+		_ = r2.Close()
 		close(done)
 	}()
 	fn()
-	_ = w.Close()
+	_ = w1.Close()
+	_ = w2.Close()
 	os.Stdout = originalStdout
+	os.Stderr = originalStderr
 	<-done
-	return buf.Bytes()
+	return buf1.Bytes(), buf2.Bytes()
 }
 
 func TestWithStdout(t *testing.T) {
-	b := withStdout(func() {
+	b1, b2 := withStdout(func() {
 		fmt.Println("potato")
+		_, _ = fmt.Fprintln(os.Stderr, "quack")
 		fmt.Println("salad")
 	})
-	if !slices.Equal(b, []byte("potato\nsalad\n")) {
+	if !slices.Equal(b1, []byte("potato\nsalad\n")) {
 		t.Errorf("stdout capture failed")
+	}
+	if !slices.Equal(b2, []byte("quack\n")) {
+		t.Errorf("stderr capture failed")
 	}
 }
 
-func TestStdout(t *testing.T) {
+func TestScanStdout(t *testing.T) {
 	var err error
-	data := withStdout(func() {
+	data, _ := withStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"scan",
@@ -71,7 +82,7 @@ func TestStdout(t *testing.T) {
 		t.Errorf("got wrong output: %s", data)
 	}
 
-	data = withStdout(func() {
+	data, _ = withStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"scan",
@@ -87,29 +98,46 @@ func TestStdout(t *testing.T) {
 	}
 }
 
-func TestError(t *testing.T) {
+func TestScanError(t *testing.T) {
 	err := qfs.Run([]string{
 		"qfs",
 		"scan",
 		"/does/not/exist",
 	})
-	if err == nil || strings.HasPrefix(err.Error(), "scan: stat /does not exist:") {
+	if err == nil || !strings.HasPrefix(err.Error(), "scan: stat /does/not/exist:") {
+		t.Errorf("wrong error: %v", err)
+	}
+	err = qfs.Run([]string{
+		"qfs",
+		"scan",
+		"/dev/null",
+	})
+	if err == nil || !strings.HasPrefix(err.Error(), "scan: /dev/null at offset 0:") {
 		t.Errorf("wrong error: %v", err)
 	}
 }
 
-func TestDir(t *testing.T) {
+func TestScanDir(t *testing.T) {
 	tmp := t.TempDir()
+	j := func(path string) string { return filepath.Join(tmp, path) }
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	_ = os.MkdirAll(j("files/x/one/two"), 0777)
+	_ = os.WriteFile(j("files/x/one/a~"), []byte("moo"), 0666)
+	_ = os.WriteFile(j("files/x/one/two/b~"), []byte("moo"), 0666)
+	_ = os.Chmod(j("files/x/one/two"), 0555)
+	defer func() { _ = os.Chmod(j("files/x/one/two"), 0777) }()
 	// XXX Strategy: implement diff, then diff top and filesDb with various filters
 	filesDb := "testdata/files.qfs"
-	top := filepath.Join(tmp, "files")
+	top := j("files")
 	err = qfs.Run([]string{
 		"qfs",
 		"scan",
+		"-junk",
+		"~$",
+		"-cleanup",
 		top,
 	})
 	check(t, err)
