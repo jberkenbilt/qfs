@@ -1,7 +1,5 @@
 # TODO
 
-* Fix `:read:` to be relative to the file containing the directive. This makes it possible to
-  download the latest filters from the repository when performing a pull operation.
 * Come up with an interface that allows us to use the `traverse` logic for traversing the repository
   as well.
 

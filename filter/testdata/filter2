@@ -1,4 +1,4 @@
 :include:
 :re:,v$
 
-:read:testdata/filter3
+:read:filter3

@@ -298,7 +298,9 @@ func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
 		case strings.HasPrefix(line, prefixRead):
 			toRead := line[len(prefixRead):]
 			err := func() error {
-				return f.ReadFile(toRead, pruneOnly)
+				// Read resolves filters relative to the current filter to enable filters to be
+				// downloaded from the repository and applied in place of local filters.
+				return f.ReadFile(filepath.Join(filepath.Dir(filename), toRead), pruneOnly)
 			}()
 			if err != nil {
 				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)

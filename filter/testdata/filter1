@@ -17,7 +17,7 @@ one/two/three/four
 
 :junk:^\.?#|~$
 
-:read:testdata/filter2
+:read:filter2
 
 :include:
 .

@@ -179,7 +179,7 @@ func TestFileErrors(t *testing.T) {
 		}
 	}
 	check("does-not-exist", "open does-not-exist: ")
-	check("testdata/bad1", "testdata/bad1:3: open does-not-exist: ")
+	check("testdata/bad1", "testdata/bad1:3: open testdata/does-not-exist: ")
 	check("testdata/bad2", "testdata/bad2:4: path not expected here")
 	check("testdata/bad3", "testdata/bad3:2: regexp error on ???*:")
 	check("testdata/bad4", "testdata/bad4:3: only one junk directive")
