@@ -258,6 +258,8 @@ func argDynamicFilter(q *parser, arg string) error {
 	case "junk":
 		group = filter.Junk
 	default:
+		// TEST: NOT COVERED. Not possible unless we messed up statically creating the
+		// arg tables.
 		panic("argDynamicFilter called with invalid argument")
 	}
 	err := func() error {
@@ -389,6 +391,7 @@ func Run(args []string) error {
 	case actDiff:
 		return q.doDiff()
 	default:
+		// TEST: NOT COVERED. Can't actually happen.
 		return fmt.Errorf("no action specified; use %s --help for help", q.progName)
 	}
 }
