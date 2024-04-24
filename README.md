@@ -1,10 +1,3 @@
-# TODO
-
-* Come up with an interface that allows us to use the `traverse` logic for traversing the repository
-  as well.
-
-----------------------------------------------------------------------
-
 # QFS
 
 `qfs` is a system for synchronizing files across multiple sites.

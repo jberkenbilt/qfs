@@ -9,6 +9,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,6 +28,13 @@ type Result struct {
 	tree *treeNode
 }
 
+type Traversable interface {
+	Lstat(path string) (fs.FileInfo, error)
+	Readlink(path string) (string, error)
+	ReadDir(path string) ([]os.DirEntry, error)
+	HasDev() bool
+}
+
 type treeNode struct {
 	path        string
 	fileType    fileinfo.FileType
@@ -43,6 +51,7 @@ type treeNode struct {
 }
 
 type Traverser struct {
+	fs         Traversable
 	root       string
 	errChan    chan error
 	notifyChan chan string
@@ -77,12 +86,12 @@ func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
 	}
 }
 
-func (tr *Traverser) getFileInfo(node *treeNode) error {
+func (tr *Traverser) getNode(node *treeNode) error {
 	path := filepath.Join(tr.root, node.path)
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
 	node.fileType = fileinfo.TypeUnknown
-	lst, err := os.Lstat(path)
+	lst, err := tr.fs.Lstat(path)
 	if err != nil {
 		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
 		// in its directory but can't lstat, so this is not exercised.
@@ -127,7 +136,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 		node.fileType = fileinfo.TypePipe
 	case modeType&os.ModeSymlink != 0:
 		node.fileType = fileinfo.TypeLink
-		target, err := os.Readlink(path)
+		target, err := tr.fs.Readlink(path)
 		if err != nil {
 			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
 			// readlink fails.
@@ -148,7 +157,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 			break
 		}
 		node.fileType = fileinfo.TypeDirectory
-		entries, err := os.ReadDir(path)
+		entries, err := tr.fs.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("read dir %s: %w", path, err)
 		}
@@ -171,7 +180,7 @@ func (tr *Traverser) getFileInfo(node *treeNode) error {
 
 func (tr *Traverser) worker() {
 	for node := range tr.workChan {
-		if err := tr.getFileInfo(node); err != nil {
+		if err := tr.getNode(node); err != nil {
 			tr.errChan <- err
 		}
 		tr.q.Push(node.children...)
@@ -219,17 +228,22 @@ func New(root string, options ...Options) (*Traverser, error) {
 		zero:       make(chan struct{}, 1),
 		q:          queue.New[*treeNode](),
 	}
-
-	lst, err := os.Lstat(root)
-	if err != nil {
-		return nil, fmt.Errorf("lstat %s: %w", root, err)
-	}
-	st, ok := lst.Sys().(*syscall.Stat_t)
-	if ok && st != nil {
-		tr.rootDev = st.Dev
-	}
 	for _, fn := range options {
 		fn(tr)
+	}
+	if tr.fs == nil {
+		tr.fs = local
+	}
+
+	if tr.fs.HasDev() {
+		lst, err := tr.fs.Lstat(root)
+		if err != nil {
+			return nil, fmt.Errorf("lstat %s: %w", root, err)
+		}
+		st, ok := lst.Sys().(*syscall.Stat_t)
+		if ok && st != nil {
+			tr.rootDev = st.Dev
+		}
 	}
 	return tr, nil
 }
