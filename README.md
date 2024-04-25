@@ -1,9 +1,132 @@
 # QFS
 
-`qfs` is a system for synchronizing files across multiple sites.
+`qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
+the local file system. The state includes the output of _stat_ on the directory and all its
+contents. `qfs` includes the following capabilities:
+* Generation of qfs _databases_ (which are efficient flat files), possibly with the application of
+  filters
+* Comparison of live file systems or databases with each other to generate a list of adds, removals,
+  and changes between one file system or another. You can compare two file systems, two databases,
+  or a file system and a database.
+* The concept of a repository and sites, implemented as a location in Amazon S3 (or an
+  API-compatible storage location) that serves as a backup and allows synchronization
+* Synchronization: the ability to _push_ local changes to a repository and to _pull_ changes from
+  the repository with the local file system with conflict detection
 
-XXX Rework this document so it is useful when read from beginning to end by someone who has no
-prior familiarity so this evolves to the project documentation.
+Do you need `qfs`?
+* If you are a Windows user and you're just trying to keep documents in sync, use One Drive.
+* If you are looking for a way to keep your photos or other binary data in sync, use Dropbox or any
+  other similar service.
+* If you are a developer trying to keep track of source code, use git.
+* If you are a Linux or Mac user who is managing lots of UNIX text and configuration files across
+  multiple environments and those files are commingled with files you don't synchronize (browser
+  cache, temporary files, or any number of other things that get dumped into your home directory)
+  and you are trying to keep those core files in sync seamlessly across multiple computers, `qfs` is
+  for you. It is a niche tool for a narrow audience.
+
+You can think of `qfs` repositories as like a cross between `git` and `Dropbox`. Suppose you have a
+core collection of files in your home directory, such as "dot files" (shell init files), task lists,
+project files, or other files that you want to keep synchronized across multiple systems. If you
+only needed that, you could use Dropbox, One Drive, or similar services. But what if those core
+files are intermingled with files you don't care about? Managing that can become complex. You could
+use `git`, but you'd have a lot of work keeping your `.gitignore` file updated, or you would have to
+add a lot of files to the repository that you didn't want. You would have to remember to commit, and
+you could never run `git clean`. What if some of the files you want to synchronize are themselves
+git repositories? This is where `qfs` comes in. `qfs` is a rewrite in `go`, with enhancements, of
+`qsync`, a tool the author wrote in the early 1990s and has used nearly every day since.
+
+Here is a sample workflow for `qfs`. Suppose you have a the following:
+* A desktop computer, which we'll call your _home system_, that has all of your important files on
+  it
+* A laptop that has a subset of files
+* A work computer that has a smaller subset of files
+
+Your standard way of working is to sit in front of one of those systems for an extended period of
+time and work on stuff. In the process of doing this, you edit some files. Your workflow would like
+something like this:
+
+* Sit in front of a particular system, such as your home system, and work on something.
+* Run `qfs push` to push your changes to a qfs repository, which also backs them up off-site.
+* Go to a different computer, such as your work computer, and run `qfs pull`. No do work on that
+  computer.
+* Run `qfs push` there, switch to a different system, and run `qfs pull`.
+
+Running `qfs push` at the end of every session and `qfs pull` at the beginning of every session will
+help ensure that you always have your files where you want them. As I said, it's a lot like Dropbox
+or One Drive, but with lots more control, a complex command-line interface, and more flexibility --
+all stuff that may appeal to you if you have chosen to live in a Linux or other UNIX environment
+directly and not rely on graphical configuration tools, etc.
+
+Even if you don't use repositories, `qfs` is still a useful tool. If you ever want to run something
+and see what files it changed, you can use `qfs` to create a before and after "database" and then
+diff them and get a list of what changed. You could also do this by running a `find` command before
+and after and using regular `diff`, but `qfs diff` produces output that is a little more direct in
+telling you what changed.
+
+# CLI
+
+The `qfs` command is run as
+```
+qfs subcommand [options]
+```
+
+* All options can be `-opt` or `--opt`
+* Some commands accept filtering options:
+  * One or more filters (see [Filters](#filters) may be given with `-filter` or `-filter-prune`.
+    When multiple filters are given, a file must be included by all of them to be included.
+  * Explicit rules create a dynamic filter. If any dynamic rules are given, the single dynamic
+    filter is used alongside any explicit filters.
+  * These arguments are allowed wherever _filter options_ appears
+    * `-filter f` -- specify a filter file
+    * `-filter-prune f` -- specify a filter file from which only prune and junk are read
+    * `-include x` -- add an include directive to the dynamic filter
+    * `-exclude x` -- add an exclude directive to the dynamic filter
+    * `-prune x` -- add a prune directive to the dynamic filter
+    * `-junk x` -- add a junk directive to the dynamic filter
+    * Options that only apply when scanning a file system (not a database):
+      * `-cleanup` -- remove any plain file that is classified as junk by any of the filters
+      * `-xdev` -- don't cross device boundaries
+
+## qfs Subcommands
+
+XXX HERE
+
+* `scan` -- scan and filter file system or database (replaces `qsfiles` and `qsprint`)
+  * Positional: directory or qfs database file
+  * _filter options_
+  * `-db` -- optionally specify an output database; if not specified, write to stdout
+  * `-f` -- include only files and symlinks (same as `-no-special -no-dir`)
+  * `-no-special` -- omit special files (devices, pipes, sockets)
+  * Only when output is stdout (not a database):
+    * `-long` -- if writing to stdout, include uid/gid data, which is usually omitted
+* `diff` -- compare two inputs, possibly applying additional filters (replaces `qsdiff`)
+  * See [Diff Format](#diff-format)
+  * Positional: twice: directory or database
+  * _filter options_
+  * `-no-dir-times` -- ignore directory modification time changes
+  * `-no-ownerships` -- ignore uid/gid changes
+  * `-check` -- output conflict checking data
+    files
+* `push`
+  * See [Sites](#sites)
+  * `-cleanup` -- cleans junk files
+  * `-n` -- perform conflict checking but make no changes
+  * `-local tarfile` -- save a tar file with changes instead of pushing; useful for backups if offline
+  * `-save-site site tarfile` -- save a tar file with changes for site; see [Sites](#sites)
+* `pull`
+  * See [Sites](#sites)
+  * `-n` -- perform conflict checking but make no changes
+  * `-site-files tarfile` -- use the specified tar file as a source of files that would be pulled.
+    This is the file created by `push -save-site`.
+* `list file` -- list all known versions of a file in the repository
+  * For best results, use bucket versioning
+* `get file` -- copy a file from the repository
+  * `-version v` -- copy the specified version; useful for restoring an old version of a file
+  * `-out path` -- write the output to the given location
+  * `-replace` -- replace the file with the retrieved version
+  * One of `-out` or `-replace` must be given.
+* `rsync` -- create equivalent (as much as possible) rsync rules files (replaces `qsync_to_rsync`)
+  * _filter options_
 
 # Filters
 
@@ -51,64 +174,6 @@ a/exclude
 * `a/exclude/x` is excluded because of `a/exclude`
 * `a/include/x` is included because of `*/exclude` since include is stronger than exclude
 * `a/x` is excluded because of the default exclude rule (`.`)
-
-# CLI
-
-Syntax is similar to but not identical to qsync.
-
-* All options can be `-opt` or `--opt`
-* Filtering options (common):
-  * One or more filters may be given with `-filter` or `-filter-prune`
-  * Explicit rules create a dynamic filter
-  * For a file to be included, it must be included by all filters including the dynamic filter and
-    any file filters
-  * These arguments are allowed wherever _filter options_ appears
-    * `-filter f` -- specify a filter file
-    * `-filter-prune f` -- specify a filter file from which only prune and junk are read
-    * `-include x` -- add an include directive to the dynamic filter
-    * `-exclude x` -- add an exclude directive to the dynamic filter
-    * `-prune x` -- add a prune directive to the dynamic filter
-    * `-junk x` -- add a junk directive to the dynamic filter
-    * Options that only apply when scanning a file system (not a database):
-      * `-cleanup` -- remove any plain file that is classified as junk by any of the filters
-      * `-xdev` -- don't cross device boundaries
-* `qfs subcommand ....`
-* `scan` -- scan and filter file system or database (replaces `qsfiles` and `qsprint`)
-  * Positional: directory or qfs database file
-  * _filter options_
-  * `-db` -- optionally specify an output database; if not specified, write to stdout
-  * `-f` -- include only files and symlinks (same as `-no-special -no-dir`)
-  * `-no-special` -- omit special files (devices, pipes, sockets)
-  * Only when output is stdout (not a database):
-    * `-long` -- if writing to stdout, include uid/gid data, which is usually omitted
-* `diff` -- compare two inputs, possibly applying additional filters (replaces `qsdiff`)
-  * See [Diff Format](#diff-format)
-  * Positional: twice: directory or database
-  * _filter options_
-  * `-no-dir-times` -- ignore directory modification time changes
-  * `-no-ownerships` -- ignore uid/gid changes
-  * `-check` -- output conflict checking data
-    files
-* `push`
-  * See [Sites](#sites)
-  * `-cleanup` -- cleans junk files
-  * `-n` -- perform conflict checking but make no changes
-  * `-local tarfile` -- save a tar file with changes instead of pushing; useful for backups if offline
-  * `-save-site site tarfile` -- save a tar file with changes for site; see [Sites](#sites)
-* `pull`
-  * See [Sites](#sites)
-  * `-n` -- perform conflict checking but make no changes
-  * `-site-files tarfile` -- use the specified tar file as a source of files that would be pulled.
-    This is the file created by `push -save-site`.
-* `list file` -- list all known versions of a file in the repository
-  * For best results, use bucket versioning
-* `get file` -- copy a file from the repository
-  * `-version v` -- copy the specified version; useful for restoring an old version of a file
-  * `-out path` -- write the output to the given location
-  * `-replace` -- replace the file with the retrieved version
-  * One of `-out` or `-replace` must be given.
-* `rsync` -- create equivalent (as much as possible) rsync rules files (replaces `qsync_to_rsync`)
-  * _filter options_
 
 # Diff Format
 
@@ -539,3 +604,11 @@ copy individual files. Consider this:
 
 Use [Minio](https://min.io) for testing or to create a local S3 API-compatible storage area for a
 local repository.
+
+# Comparison with qsync
+
+Unless you are the author of `qfs` or one of a small handful of people who knew the author
+personally. You probably don't use `qsync`, and you can skip this.
+
+* `qfs` replaces `qsfiles`, `qsdiff`, `qsprint`, `qsync_to_rsync`, `make_sync`, and `apply_sync`.
+  The rest of qsync has been retired.
