@@ -9,7 +9,6 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,13 +27,6 @@ type Result struct {
 	tree *treeNode
 }
 
-type Traversable interface {
-	Lstat(path string) (fs.FileInfo, error)
-	Readlink(path string) (string, error)
-	ReadDir(path string) ([]os.DirEntry, error)
-	HasDev() bool
-}
-
 type treeNode struct {
 	path        string
 	fileType    fileinfo.FileType
@@ -51,7 +43,7 @@ type treeNode struct {
 }
 
 type Traverser struct {
-	fs         Traversable
+	fs         fileinfo.Source
 	root       string
 	errChan    chan error
 	notifyChan chan string
@@ -235,7 +227,7 @@ func New(root string, options ...Options) (*Traverser, error) {
 		tr.fs = local
 	}
 
-	if tr.fs.HasDev() {
+	if tr.fs.HasStDev() {
 		lst, err := tr.fs.Lstat(root)
 		if err != nil {
 			return nil, fmt.Errorf("lstat %s: %w", root, err)

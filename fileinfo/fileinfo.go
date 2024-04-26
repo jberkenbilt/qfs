@@ -1,6 +1,10 @@
 package fileinfo
 
-import "time"
+import (
+	"io/fs"
+	"os"
+	"time"
+)
 
 type FileType rune
 
@@ -30,4 +34,11 @@ type Provider interface {
 	// ForEach provides each FileInfo in a non-deterministic order.
 	ForEach(func(*FileInfo) error) error
 	Close() error
+}
+
+type Source interface {
+	Lstat(path string) (fs.FileInfo, error)
+	Readlink(path string) (string, error)
+	ReadDir(path string) ([]os.DirEntry, error)
+	HasStDev() bool
 }

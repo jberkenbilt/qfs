@@ -22,6 +22,6 @@ func (*Local) ReadDir(path string) ([]os.DirEntry, error) {
 	return os.ReadDir(path)
 }
 
-func (*Local) HasDev() bool {
+func (*Local) HasStDev() bool {
 	return true
 }

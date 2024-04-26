@@ -145,6 +145,6 @@ func (s *Repo) ReadDir(path string) ([]fs.DirEntry, error) {
 	return nil, nil
 }
 
-func (s *Repo) HasDev() bool {
+func (s *Repo) HasStDev() bool {
 	return false
 }
