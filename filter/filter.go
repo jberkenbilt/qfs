@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"os"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -245,15 +245,15 @@ func (f *Filter) ReadLine(group Group, line string) error {
 	return nil
 }
 
-func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
+func (f *Filter) ReadFile(path *fileinfo.Path, pruneOnly bool) error {
 	const (
 		stTop = iota
 		stGroup
 		stIgnore
 	)
-	r, err := os.Open(filename)
+	r, err := path.Open()
 	if err != nil {
-		return fmt.Errorf("open %s: %w", filename, err)
+		return fmt.Errorf("open %s: %w", path.Path(), err)
 	}
 	defer func() { _ = r.Close() }()
 	scanner := bufio.NewScanner(r)
@@ -300,25 +300,25 @@ func (f *Filter) ReadFile(filename string, pruneOnly bool) error {
 			err := func() error {
 				// Read resolves filters relative to the current filter to enable filters to be
 				// downloaded from the repository and applied in place of local filters.
-				return f.ReadFile(filepath.Join(filepath.Dir(filename), toRead), pruneOnly)
+				return f.ReadFile(path.Relative(toRead), pruneOnly)
 			}()
 			if err != nil {
-				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+				return fmt.Errorf("%s:%d: %w", path.Path(), lineNo, err)
 			}
 		case strings.HasPrefix(line, prefixJunk):
 			if err := f.SetJunk(line[len(prefixJunk):]); err != nil {
-				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+				return fmt.Errorf("%s:%d: %w", path.Path(), lineNo, err)
 			}
 			state = stTop
 		default:
 			if state == stIgnore {
 				continue
 			} else if state != stGroup {
-				return fmt.Errorf("%s:%d: path not expected here", filename, lineNo)
+				return fmt.Errorf("%s:%d: path not expected here", path.Path(), lineNo)
 			}
 			err = f.ReadLine(group, line)
 			if err != nil {
-				return fmt.Errorf("%s:%d: %w", filename, lineNo, err)
+				return fmt.Errorf("%s:%d: %w", path.Path(), lineNo, err)
 			}
 		}
 	}

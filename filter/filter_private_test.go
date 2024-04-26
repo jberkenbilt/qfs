@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"golang.org/x/exp/maps"
 	"regexp"
 	"slices"
@@ -27,7 +28,7 @@ func checkFile(
 ) {
 	t.Helper()
 	f := New()
-	if err := f.ReadFile(filename, pruneOnly); err != nil {
+	if err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), pruneOnly); err != nil {
 		t.Fatalf("read %s: %v", filename, err)
 	}
 	reString := func(re *regexp.Regexp) string {
@@ -171,7 +172,7 @@ func TestFileErrors(t *testing.T) {
 	check := func(filename string, errPrefix string) {
 		t.Helper()
 		f := New()
-		err := f.ReadFile(filename, false)
+		err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), false)
 		if err == nil {
 			t.Errorf("%s: no error", filename)
 		} else if !strings.HasPrefix(err.Error(), errPrefix) {

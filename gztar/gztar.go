@@ -52,7 +52,7 @@ func Extract(filename string, dest string) error {
 			}
 			switch {
 			case mode.IsRegular():
-				f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0600)
+				f, err := os.Create(name)
 				if err != nil {
 					return err
 				}

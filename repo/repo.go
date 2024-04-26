@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"io"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -147,4 +148,14 @@ func (s *Repo) ReadDir(path string) ([]fs.DirEntry, error) {
 
 func (s *Repo) HasStDev() bool {
 	return false
+}
+
+func (s *Repo) Open(path string) (io.ReadCloser, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *Repo) Remove(path string) error {
+	//TODO implement me
+	panic("implement me")
 }

@@ -44,7 +44,7 @@ type treeNode struct {
 
 type Traverser struct {
 	fs         fileinfo.Source
-	root       string
+	root       *fileinfo.Path
 	errChan    chan error
 	notifyChan chan string
 	workChan   chan *treeNode
@@ -79,15 +79,15 @@ func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
 }
 
 func (tr *Traverser) getNode(node *treeNode) error {
-	path := filepath.Join(tr.root, node.path)
+	path := tr.root.Join(node.path)
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
 	node.fileType = fileinfo.TypeUnknown
-	lst, err := tr.fs.Lstat(path)
+	lst, err := path.Lstat()
 	if err != nil {
 		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
 		// in its directory but can't lstat, so this is not exercised.
-		return fmt.Errorf("lstat %s: %w", path, err)
+		return fmt.Errorf("lstat %s: %w", path.Path(), err)
 	}
 	node.modTime = lst.ModTime().Truncate(time.Millisecond)
 	mode := lst.Mode()
@@ -107,8 +107,8 @@ func (tr *Traverser) getNode(node *treeNode) error {
 		node.size = lst.Size()
 		if group == filter.Junk && tr.cleanup {
 			node.included = false
-			if err = os.Remove(filepath.Join(tr.root, node.path)); err != nil {
-				return fmt.Errorf("remove junk %s: %w", path, err)
+			if err = tr.root.Join(node.path).Remove(); err != nil {
+				return fmt.Errorf("remove junk %s: %w", path.Path(), err)
 			} else {
 				tr.notifyChan <- fmt.Sprintf("removing %s", node.path)
 			}
@@ -128,11 +128,11 @@ func (tr *Traverser) getNode(node *treeNode) error {
 		node.fileType = fileinfo.TypePipe
 	case modeType&os.ModeSymlink != 0:
 		node.fileType = fileinfo.TypeLink
-		target, err := tr.fs.Readlink(path)
+		target, err := path.ReadLink()
 		if err != nil {
 			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
 			// readlink fails.
-			return fmt.Errorf("readlink %s: %w", path, err)
+			return fmt.Errorf("readlink %s: %w", path.Path(), err)
 		}
 		node.target = target
 	case mode.IsDir():
@@ -149,9 +149,9 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			break
 		}
 		node.fileType = fileinfo.TypeDirectory
-		entries, err := tr.fs.ReadDir(path)
+		entries, err := path.ReadDir()
 		if err != nil {
-			return fmt.Errorf("read dir %s: %w", path, err)
+			return fmt.Errorf("read dir %s: %w", path.Path(), err)
 		}
 		sort.Slice(entries, func(i, j int) bool {
 			return entries[i].Name() < entries[j].Name()
@@ -213,7 +213,6 @@ func (tr *Traverser) traverse(node *treeNode) {
 
 func New(root string, options ...Options) (*Traverser, error) {
 	tr := &Traverser{
-		root:       root,
 		errChan:    make(chan error, numWorkers),
 		notifyChan: make(chan string, numWorkers),
 		workChan:   make(chan *treeNode, numWorkers),
@@ -224,13 +223,14 @@ func New(root string, options ...Options) (*Traverser, error) {
 		fn(tr)
 	}
 	if tr.fs == nil {
-		tr.fs = local
+		tr.fs = fileinfo.LocalSource
 	}
+	tr.root = fileinfo.NewPath(tr.fs, root)
 
 	if tr.fs.HasStDev() {
-		lst, err := tr.fs.Lstat(root)
+		lst, err := tr.root.Lstat()
 		if err != nil {
-			return nil, fmt.Errorf("lstat %s: %w", root, err)
+			return nil, fmt.Errorf("lstat %s: %w", tr.root.Path(), err)
 		}
 		st, ok := lst.Sys().(*syscall.Stat_t)
 		if ok && st != nil {

@@ -229,7 +229,7 @@ func argFilter(q *parser, arg string) error {
 	filename := q.args[q.arg]
 	q.arg++
 	f := filter.New()
-	err := f.ReadFile(filename, pruneOnly)
+	err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), pruneOnly)
 	if err != nil {
 		return err
 	}

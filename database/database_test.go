@@ -28,17 +28,17 @@ func checkError(t *testing.T, e error, text string) {
 func TestRoundTrip(t *testing.T) {
 	// Read qsync, write qfs, read resulting qfs. The results should be identical.
 	tmp := t.TempDir()
-	j := func(path string) string {
-		return filepath.Join(tmp, path)
+	j := func(path string) *fileinfo.Path {
+		return fileinfo.NewPath(fileinfo.LocalSource, filepath.Join(tmp, path))
 	}
-	db1, err := database.Open("testdata/real.qsync")
+	db1, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
 	check(t, err)
 	defer func() { _ = db1.Close() }()
 	err = database.WriteDb("/does/not/exist", db1)
 	if err == nil || !strings.HasPrefix(err.Error(), "create database \"/does/not/exist\": ") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = database.WriteDb(j("qsync-to-qfs"), db1)
+	err = database.WriteDb(j("qsync-to-qfs").Path(), db1)
 	check(t, err)
 	db2, err := database.Open(j("qsync-to-qfs"))
 	check(t, err)
@@ -48,12 +48,14 @@ func TestRoundTrip(t *testing.T) {
 		records = append(records, f)
 		return nil
 	}
+	db1, _ = database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
 	err = db1.ForEach(func(*fileinfo.FileInfo) error {
 		return errors.New("propagated")
 	})
 	if err == nil || !strings.HasPrefix(err.Error(), "testdata/real.qsync at offset 84: propagated") {
 		t.Errorf("error did not propagate from callback: %v", err)
 	}
+	db1, _ = database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
 	err = db1.ForEach(load)
 	check(t, err)
 	all1 := records
@@ -63,6 +65,16 @@ func TestRoundTrip(t *testing.T) {
 	all2 := records
 	if !reflect.DeepEqual(all1, all2) {
 		t.Error("round trip failed")
+	}
+	var panicMsg string
+	func() {
+		defer func() {
+			panicMsg = recover().(string)
+		}()
+		_ = db2.ForEach(load)
+	}()
+	if !strings.Contains(panicMsg, "already been read") {
+		t.Errorf("didn't get panic: %v", panicMsg)
 	}
 }
 
@@ -78,7 +90,7 @@ func TestPartialFiles(t *testing.T) {
 			noSpecial = true
 		}
 		db, err := database.Open(
-			"testdata/real.qfs",
+			fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qfs"),
 			database.WithFilesOnly(filesOnly),
 			database.WithNoSpecial(noSpecial),
 		)
@@ -138,7 +150,7 @@ func TestErrors(t *testing.T) {
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
 			err := func() error {
-				db, err := database.Open(filename)
+				db, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, filename))
 				if err != nil {
 					return err
 				}
