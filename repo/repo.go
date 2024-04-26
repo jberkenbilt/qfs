@@ -15,10 +15,13 @@ import (
 
 var repo = &Repo{}
 
+type Options func(*Repo)
+
 type Repo struct {
-	s3Client *s3.Client
-	bucket   string
-	prefix   string
+	s3Client      *s3.Client
+	localEndpoint string
+	bucket        string
+	prefix        string
 }
 
 type repoDirEntry struct {
@@ -82,32 +85,28 @@ func (fi *repoFileInfo) Sys() any {
 	return struct{}{}
 }
 
-func New(bucket, prefix, region, endpoint string) (*Repo, error) {
-	var loadOptions []func(*config.LoadOptions) error
-	if region != "" {
-		loadOptions = append(loadOptions, config.WithRegion(region))
+func New(bucket, prefix string, options ...Options) (*Repo, error) {
+	r := &Repo{
+		bucket: bucket,
+		prefix: prefix,
 	}
-	cfg, err := config.LoadDefaultConfig(context.Background(), loadOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+	for _, fn := range options {
+		fn(r)
 	}
-	var s3Options []func(options *s3.Options)
-	// XXX This should something like WithLocalEndpoint
-	if endpoint != "" {
-		s3Options = append(
-			s3Options,
-			func(options *s3.Options) {
-				options.BaseEndpoint = &endpoint
-				options.UsePathStyle = true
-			},
-		)
+	if r.s3Client == nil {
+		cfg, err := config.LoadDefaultConfig(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		r.s3Client = s3.NewFromConfig(cfg)
 	}
-	s3Client := s3.NewFromConfig(cfg, s3Options...)
-	return &Repo{
-		s3Client: s3Client,
-		bucket:   bucket,
-		prefix:   prefix,
-	}, nil
+	return r, nil
+}
+
+func WithS3Client(client *s3.Client) func(*Repo) {
+	return func(r *Repo) {
+		r.s3Client = client
+	}
 }
 
 func (s *Repo) Lstat(path string) (fs.FileInfo, error) {
