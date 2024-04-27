@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,6 +37,7 @@ type repoFileInfo struct {
 type repoDirEntry struct {
 	name     string
 	isDir    bool
+	s3Time   *time.Time
 	fileInfo *repoFileInfo
 }
 
@@ -82,7 +86,7 @@ func (fi *repoFileInfo) IsDir() bool {
 }
 
 func (fi *repoFileInfo) Sys() any {
-	return struct{}{}
+	return nil
 }
 
 func New(bucket, prefix string, options ...Options) (*Repo, error) {
@@ -130,16 +134,27 @@ func (s *Repo) ReadDir(path string) ([]fs.DirEntry, error) {
 		Prefix:    &key,
 	}
 	p := s3.NewListObjectsV2Paginator(s.s3Client, input)
+	var entries []*repoDirEntry
 	for p.HasMorePages() {
 		output, err := p.NextPage(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("list s3://%s/%s: %w", s.bucket, key, err)
 		}
 		for _, x := range output.CommonPrefixes {
-			fmt.Println("XXX prefix", *x.Prefix)
+			// We don't know the s3 time for a directory by its prefix. We have to wait until
+			// we read that and see the empty key.
+			entries = append(entries, &repoDirEntry{
+				name:  filepath.Base(*x.Prefix),
+				isDir: true,
+			})
+			// XXX Deal with nil time -- we have to work this out in traverse -- see special case comment.
 		}
 		for _, x := range output.Contents {
-			fmt.Println("XXX content", *x.Key, *x.LastModified)
+			entries = append(entries, &repoDirEntry{
+				name:   filepath.Base(*x.Key),
+				isDir:  false,
+				s3Time: x.LastModified,
+			})
 		}
 	}
 	return nil, nil
@@ -150,11 +165,64 @@ func (s *Repo) HasStDev() bool {
 }
 
 func (s *Repo) Open(path string) (io.ReadCloser, error) {
-	//TODO implement me
-	panic("implement me")
+	key := filepath.Join(s.prefix, path)
+	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
+	input := &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	}
+	output, err := s.s3Client.GetObject(context.Background(), input)
+	if err != nil {
+		return nil, fmt.Errorf("get object %s: %w", s3path, err)
+	}
+	return output.Body, nil
 }
 
 func (s *Repo) Remove(path string) error {
-	//TODO implement me
-	panic("implement me")
+	key := filepath.Join(s.prefix, path)
+	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
+	input := &s3.DeleteObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	}
+	_, err := s.s3Client.DeleteObject(context.Background(), input)
+	if err != nil {
+		return fmt.Errorf("delete object %s: %w", s3path, err)
+	}
+	return nil
+}
+
+func (s *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
+	// XXX
+	return nil, nil
+}
+
+// Store copies the local file at `path` into the repository with the appropriate
+// metadata. `path` is relative to top of the file collection in both the local
+// and repository contexts.
+func (s *Repo) Store(path string) error {
+	r, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	st, err := os.Lstat(path)
+	if err != nil {
+		// TEST: NOT COVERED. No way to fail to stat a file we just successfully opened.
+		return err
+	}
+	// XXX HERE
+	metadata := map[string]string{
+		"qfs": fmt.Sprintf(""),
+	}
+
+	key := filepath.Join(s.prefix, path)
+	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
+	uploader := manager.NewUploader(s.s3Client)
+	input := s3.PutObjectInput{
+		Bucket:   &s.bucket,
+		Key:      &key,
+		Body:     r,
+		Metadata: metadata,
+	}
 }
