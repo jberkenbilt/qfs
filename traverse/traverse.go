@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var numWorkers = 5 * runtime.NumCPU()
@@ -26,6 +28,7 @@ type Result struct {
 
 type treeNode struct {
 	path     string
+	s3Dir    bool
 	info     *fileinfo.FileInfo
 	children []*treeNode
 	included bool
@@ -53,9 +56,30 @@ func (tr *Traverser) getNode(node *treeNode) error {
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
 	var err error
-	node.info, err = path.FileInfo()
-	if err != nil {
-		return err
+	if node.s3Dir {
+		// qfs stores an empty directory marker ending with a slash for directories. If
+		// we have x/ and x/y, when we list with / as the delimiter, we will see x/ as a
+		// prefix, but we won't see the x/ key until we list x/, and therefore we won't
+		// know the s3 modification time. This means we can never get a cache hit on the
+		// database, which means we'd have to make a HeadObject call for every directory.
+		// If we mark something as an S3 directory, this tells us that we can get info as
+		// we traverse the children. Create a place-holder that we will fill in if we
+		// can.
+		node.info = &fileinfo.FileInfo{
+			Path:        path.Path(),
+			FileType:    fileinfo.TypeDirectory,
+			ModTime:     time.Now(),
+			Permissions: 0755,
+			Uid:         database.CurUid,
+			Gid:         database.CurGid,
+		}
+	} else {
+		node.info, err = path.FileInfo()
+		if err != nil {
+			// TEST: NOT COVERED. This would mean we couldn't get FileInfo for a file we
+			// encountered during directory traversal.
+			return err
+		}
 	}
 	ft := node.info.FileType
 	isSpecial := !(ft == fileinfo.TypeFile || ft == fileinfo.TypeDirectory || ft == fileinfo.TypeLink)
@@ -87,10 +111,24 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			if err != nil {
 				return fmt.Errorf("read dir %s: %w", path.Path(), err)
 			}
-			sort.Strings(entries)
+			if node.s3Dir {
+				// Now that we've read the directory entries, we should be able to get a cache it
+				// on the info call. An error here would mean that the directory marker itself
+				// was missing. In that case, we'll just stick with the place-holder, which is
+				// better than potentially skipping all the descendents.
+				info, err := path.FileInfo()
+				if err == nil {
+					node.info = info
+				}
+			}
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].Name < entries[j].Name
+			})
 			for _, e := range entries {
-				// XXX SPECIAL CASE FOR s3 "directories"
-				node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e)})
+				node.children = append(node.children, &treeNode{
+					path:  filepath.Join(node.path, e.Name),
+					s3Dir: e.S3Dir,
+				})
 			}
 		}
 	}

@@ -38,10 +38,16 @@ type Provider interface {
 	Close() error
 }
 
+type DirEntry struct {
+	Name   string
+	S3Dir  bool
+	S3Time time.Time
+}
+
 type Source interface {
 	FullPath(path string) string
 	FileInfo(path string) (*FileInfo, error)
-	DirEntries(path string) ([]string, error)
+	DirEntries(path string) ([]DirEntry, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
 	HasStDev() bool
@@ -67,7 +73,7 @@ func (p *Path) FileInfo() (*FileInfo, error) {
 	return p.source.FileInfo(p.path)
 }
 
-func (p *Path) DirEntries() ([]string, error) {
+func (p *Path) DirEntries() ([]DirEntry, error) {
 	return p.source.DirEntries(p.path)
 }
 

@@ -35,6 +35,7 @@ type Repo struct {
 	prefix   string
 	m        sync.Mutex
 	modTimes map[string]time.Time // needs mutex
+	//db       database.Memory      // needs mutex
 }
 
 func New(bucket, prefix string, options ...Options) (*Repo, error) {
@@ -131,7 +132,7 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	return fi, nil
 }
 
-func (r *Repo) DirEntries(path string) ([]string, error) {
+func (r *Repo) DirEntries(path string) ([]fileinfo.DirEntry, error) {
 	key := filepath.Join(r.prefix, path)
 	if key != "" && !strings.HasSuffix(key, "/") {
 		key += "/"
@@ -142,7 +143,7 @@ func (r *Repo) DirEntries(path string) ([]string, error) {
 		Prefix:    &key,
 	}
 	p := s3.NewListObjectsV2Paginator(r.s3Client, input)
-	var entries []string
+	var entries []fileinfo.DirEntry
 	for p.HasMorePages() {
 		output, err := p.NextPage(ctx)
 		if err != nil {
@@ -155,12 +156,17 @@ func (r *Repo) DirEntries(path string) ([]string, error) {
 		for _, x := range output.CommonPrefixes {
 			// This is a directory. An explicit key ending with / may exist, in which case it
 			// will be seen when we read the children.
-			entries = append(entries, filepath.Base(*x.Prefix))
+			entries = append(entries, fileinfo.DirEntry{
+				Name:  filepath.Base(*x.Prefix),
+				S3Dir: true,
+			})
 		}
 		for _, x := range output.Contents {
-			// If the key ends with /, this is the directory marker.
+			// If the key ends with /, this is the directory marker. We don't want to return
+			// it, but we still want to record its modification time so we can get a cache
+			// hit.
 			if !strings.HasSuffix(*x.Key, "/") {
-				entries = append(entries, filepath.Base(*x.Key))
+				entries = append(entries, fileinfo.DirEntry{Name: filepath.Base(*x.Key)})
 			}
 			r.withLock(func() {
 				r.modTimes[*x.Key] = *x.LastModified

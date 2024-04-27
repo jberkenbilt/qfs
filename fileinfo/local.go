@@ -27,14 +27,14 @@ func (ls *LocalSource) Readlink(path string) (string, error) {
 	return os.Readlink(ls.FullPath(path))
 }
 
-func (ls *LocalSource) DirEntries(path string) ([]string, error) {
+func (ls *LocalSource) DirEntries(path string) ([]DirEntry, error) {
 	entries, err := os.ReadDir(ls.FullPath(path))
 	if err != nil {
 		return nil, err
 	}
-	var result []string
+	var result []DirEntry
 	for _, e := range entries {
-		result = append(result, e.Name())
+		result = append(result, DirEntry{Name: e.Name()})
 	}
 	return result, nil
 }
