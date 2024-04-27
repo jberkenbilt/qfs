@@ -30,6 +30,7 @@ type FileInfo struct {
 	Uid         uint32
 	Gid         uint32
 	Special     string
+	S3Time      time.Time
 }
 
 type Provider interface {

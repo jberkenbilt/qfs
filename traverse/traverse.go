@@ -157,6 +157,7 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			return entries[i].Name() < entries[j].Name()
 		})
 		for _, e := range entries {
+			// XXX SPECIAL CASE FOR s3 "directories"
 			node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e.Name())})
 		}
 	}

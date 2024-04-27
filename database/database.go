@@ -31,6 +31,8 @@ type Db struct {
 	filters    []*filter.Filter
 	filesOnly  bool
 	noSpecial  bool
+	curUid     uint32
+	curGid     uint32
 }
 
 type dbFormat int
@@ -38,6 +40,7 @@ type dbFormat int
 const (
 	dbQSync = iota
 	dbQfs
+	dbRepo
 )
 
 var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
@@ -50,8 +53,10 @@ func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
 		return nil, fmt.Errorf("open database %s: %w", path.Path(), err)
 	}
 	db := &Db{
-		path: path,
-		f:    f,
+		path:   path,
+		f:      f,
+		curUid: uint32(os.Getuid()),
+		curGid: uint32(os.Getgid()),
 	}
 	if err := db.readHeader(); err != nil {
 		_ = f.Close()
@@ -95,6 +100,8 @@ func (db *Db) readHeader() error {
 	header := string(first)
 	if header == "QFS 1" {
 		db.format = dbQfs
+	} else if header == "QFS REPO 1" {
+		db.format = dbRepo
 	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
 		db.format = dbQSync
 	} else {
@@ -201,6 +208,8 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 			f, err = db.handleQSync(fields)
 		case dbQfs:
 			f, err = db.handleQfs(fields)
+		case dbRepo:
+			f, err = db.handleRepo(fields)
 		}
 		if err != nil {
 			return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
@@ -326,6 +335,35 @@ func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 		Uid:         uint32(uid),
 		Gid:         uint32(gid),
 		Special:     fields[7],
+	}, nil
+}
+
+func (db *Db) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
+	if len(fields) != 7 {
+		return nil, fmt.Errorf("wrong number of fields: %d, not 7", len(fields))
+	}
+	// 0    1      2     3     4    5    6
+	// name s3Time fType mtime size mode special
+	db.copyFieldIfEmpty(fields, 5) // mode
+	path := fields[0]
+	s3milliseconds, _ := strconv.Atoi(fields[1])
+	fileType := fileinfo.TypeUnknown
+	if len(fields[2]) == 1 {
+		fileType = fileinfo.FileType(fields[2][0])
+	}
+	milliseconds, _ := strconv.Atoi(fields[3])
+	size, _ := strconv.Atoi(fields[4])
+	mode, _ := strconv.ParseInt(fields[5], 8, 32)
+	return &fileinfo.FileInfo{
+		Path:        path,
+		FileType:    fileType,
+		ModTime:     time.UnixMilli(int64(milliseconds)),
+		Size:        int64(size),
+		Permissions: uint16(mode),
+		Uid:         db.curUid,
+		Gid:         db.curGid,
+		Special:     fields[7],
+		S3Time:      time.UnixMilli(int64(s3milliseconds)),
 	}, nil
 }
 
