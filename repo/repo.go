@@ -1,104 +1,53 @@
 package repo
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-var repo = &Repo{}
+const MetadataKey = "qfs"
+
+var metadataRe = regexp.MustCompile(`^(\d+) (?:([0-7]{4})|->(.+))$`)
+
+var ctx = context.Background()
 
 type Options func(*Repo)
 
 type Repo struct {
-	s3Client      *s3.Client
-	localEndpoint string
-	bucket        string
-	prefix        string
-}
-
-type repoFileInfo struct {
-	name    string
-	size    int64
-	mode    fs.FileMode
-	modTime time.Time
-}
-
-type repoDirEntry struct {
-	name     string
-	isDir    bool
-	s3Time   *time.Time
-	fileInfo *repoFileInfo
-}
-
-func (di *repoDirEntry) Name() string {
-	return di.name
-}
-
-func (di *repoDirEntry) IsDir() bool {
-	return di.isDir
-}
-
-func (di *repoDirEntry) Type() fs.FileMode {
-	if di.fileInfo == nil {
-		//TODO implement me
-		panic("implement me")
-	}
-	return di.fileInfo.Mode().Type()
-}
-
-func (di *repoDirEntry) Info() (fs.FileInfo, error) {
-	if di.fileInfo == nil {
-		//TODO implement me
-		panic("implement me")
-	}
-	return di.fileInfo, nil
-}
-
-func (fi *repoFileInfo) Name() string {
-	return fi.name
-}
-
-func (fi *repoFileInfo) Size() int64 {
-	return fi.size
-}
-
-func (fi *repoFileInfo) Mode() fs.FileMode {
-	return fi.mode
-}
-
-func (fi *repoFileInfo) ModTime() time.Time {
-	return fi.modTime
-}
-
-func (fi *repoFileInfo) IsDir() bool {
-	return fi.mode.IsDir()
-}
-
-func (fi *repoFileInfo) Sys() any {
-	return nil
+	s3Client *s3.Client
+	bucket   string
+	prefix   string
+	m        sync.Mutex
+	modTimes map[string]time.Time // needs mutex
 }
 
 func New(bucket, prefix string, options ...Options) (*Repo, error) {
 	r := &Repo{
-		bucket: bucket,
-		prefix: prefix,
+		bucket:   bucket,
+		prefix:   prefix,
+		modTimes: map[string]time.Time{},
 	}
 	for _, fn := range options {
 		fn(r)
 	}
 	if r.s3Client == nil {
-		cfg, err := config.LoadDefaultConfig(context.Background())
+		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -107,122 +56,198 @@ func New(bucket, prefix string, options ...Options) (*Repo, error) {
 	return r, nil
 }
 
+func (r *Repo) withLock(fn func()) {
+	r.m.Lock()
+	defer r.m.Unlock()
+	fn()
+}
+
 func WithS3Client(client *s3.Client) func(*Repo) {
 	return func(r *Repo) {
 		r.s3Client = client
 	}
 }
 
-func (s *Repo) Lstat(path string) (fs.FileInfo, error) {
-	//TODO implement me
-	panic("implement me")
+func (r *Repo) FullPath(path string) string {
+	return fmt.Sprintf("s3://%s/%s", r.bucket, filepath.Join(r.prefix, path))
 }
 
-func (s *Repo) Readlink(path string) (string, error) {
-	//TODO implement me
-	panic("implement me")
+func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
+	// XXX Still need to work in cached database
+	key := filepath.Join(r.prefix, path)
+	input := &s3.HeadObjectInput{
+		Bucket: &r.bucket,
+		Key:    &key,
+	}
+	output, err := r.s3Client.HeadObject(ctx, input)
+	var notFound *types.NotFound
+	isDir := false
+	if errors.As(err, &notFound) {
+		isDir = true
+		input = &s3.HeadObjectInput{
+			Bucket: &r.bucket,
+			Key:    aws.String(key + "/"),
+		}
+		output, err = r.s3Client.HeadObject(ctx, input)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get information for %s: %w", r.FullPath(path), err)
+	}
+	var qfsData string
+	if output.Metadata != nil {
+		qfsData = output.Metadata[MetadataKey]
+	}
+	fi := &fileinfo.FileInfo{
+		Path:        path,
+		FileType:    fileinfo.TypeUnknown,
+		ModTime:     *output.LastModified,
+		Size:        *output.ContentLength,
+		Permissions: 0777,
+		Uid:         database.CurUid,
+		Gid:         database.CurGid,
+		S3Time:      *output.LastModified,
+	}
+	if qfsData != "" {
+		if m := metadataRe.FindStringSubmatch(qfsData); m != nil {
+			milliseconds, _ := strconv.Atoi(m[1])
+			fi.ModTime = time.UnixMilli(int64(milliseconds))
+			if m[2] != "" {
+				permissions, _ := strconv.ParseInt(m[2], 8, 32)
+				fi.Permissions = uint16(permissions)
+			}
+			if m[3] != "" {
+				fi.FileType = fileinfo.TypeLink
+				fi.Special = m[3] // link target
+			}
+		}
+	}
+	if fi.FileType == fileinfo.TypeUnknown {
+		if isDir {
+			fi.FileType = fileinfo.TypeDirectory
+		} else {
+			fi.FileType = fileinfo.TypeFile
+		}
+	}
+	return fi, nil
 }
 
-func (s *Repo) ReadDir(path string) ([]fs.DirEntry, error) {
-	key := filepath.Join(s.prefix, path)
+func (r *Repo) DirEntries(path string) ([]string, error) {
+	key := filepath.Join(r.prefix, path)
 	if key != "" && !strings.HasSuffix(key, "/") {
 		key += "/"
 	}
 	input := &s3.ListObjectsV2Input{
-		Bucket:    &s.bucket,
+		Bucket:    &r.bucket,
 		Delimiter: aws.String("/"),
 		Prefix:    &key,
 	}
-	p := s3.NewListObjectsV2Paginator(s.s3Client, input)
-	var entries []*repoDirEntry
+	p := s3.NewListObjectsV2Paginator(r.s3Client, input)
+	var entries []string
 	for p.HasMorePages() {
-		output, err := p.NextPage(context.Background())
+		output, err := p.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list s3://%s/%s: %w", s.bucket, key, err)
+			return nil, fmt.Errorf("list s3://%s/%s: %w", r.bucket, key, err)
 		}
+		// qfs stores metadata on directories by creating empty keys whose paths end with
+		// /. If you have a key x/y/, when you list x/ with delimiter /, you will see
+		// x/y/ as a prefix, and when list x/y/ with delimiter /, you will see x/y/ as
+		// content. We can only get the modify time when we see it as content.
 		for _, x := range output.CommonPrefixes {
-			// We don't know the s3 time for a directory by its prefix. We have to wait until
-			// we read that and see the empty key.
-			entries = append(entries, &repoDirEntry{
-				name:  filepath.Base(*x.Prefix),
-				isDir: true,
-			})
-			// XXX Deal with nil time -- we have to work this out in traverse -- see special case comment.
+			// This is a directory. An explicit key ending with / may exist, in which case it
+			// will be seen when we read the children.
+			entries = append(entries, filepath.Base(*x.Prefix))
 		}
 		for _, x := range output.Contents {
-			entries = append(entries, &repoDirEntry{
-				name:   filepath.Base(*x.Key),
-				isDir:  false,
-				s3Time: x.LastModified,
+			// If the key ends with /, this is the directory marker.
+			if !strings.HasSuffix(*x.Key, "/") {
+				entries = append(entries, filepath.Base(*x.Key))
+			}
+			r.withLock(func() {
+				r.modTimes[*x.Key] = *x.LastModified
 			})
 		}
 	}
-	return nil, nil
+	return entries, nil
 }
 
-func (s *Repo) HasStDev() bool {
+func (r *Repo) HasStDev() bool {
 	return false
 }
 
-func (s *Repo) Open(path string) (io.ReadCloser, error) {
-	key := filepath.Join(s.prefix, path)
-	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
+func (r *Repo) Open(path string) (io.ReadCloser, error) {
+	key := filepath.Join(r.prefix, path)
 	input := &s3.GetObjectInput{
-		Bucket: &s.bucket,
+		Bucket: &r.bucket,
 		Key:    &key,
 	}
-	output, err := s.s3Client.GetObject(context.Background(), input)
+	output, err := r.s3Client.GetObject(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("get object %s: %w", s3path, err)
+		return nil, fmt.Errorf("get object %s: %w", r.FullPath(path), err)
 	}
 	return output.Body, nil
 }
 
-func (s *Repo) Remove(path string) error {
-	key := filepath.Join(s.prefix, path)
-	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
+func (r *Repo) Remove(path string) error {
+	key := filepath.Join(r.prefix, path)
 	input := &s3.DeleteObjectInput{
-		Bucket: &s.bucket,
+		Bucket: &r.bucket,
 		Key:    &key,
 	}
-	_, err := s.s3Client.DeleteObject(context.Background(), input)
+	_, err := r.s3Client.DeleteObject(ctx, input)
 	if err != nil {
-		return fmt.Errorf("delete object %s: %w", s3path, err)
+		return fmt.Errorf("delete object %s: %w", r.FullPath(path), err)
 	}
 	return nil
-}
-
-func (s *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
-	// XXX
-	return nil, nil
 }
 
 // Store copies the local file at `path` into the repository with the appropriate
 // metadata. `path` is relative to top of the file collection in both the local
 // and repository contexts.
-func (s *Repo) Store(path string) error {
-	r, err := os.Open(path)
+func (r *Repo) Store(localPath string, repoPath string) error {
+	p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
+	info, err := p.FileInfo()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = r.Close() }()
-	st, err := os.Lstat(path)
-	if err != nil {
-		// TEST: NOT COVERED. No way to fail to stat a file we just successfully opened.
-		return err
+	if repoPath == "." {
+		repoPath = ""
 	}
-	// XXX HERE
+	key := filepath.Join(r.prefix, repoPath)
+	var qfsData string
+	var body io.Reader
+	switch info.FileType {
+	case fileinfo.TypeDirectory:
+		key += "/"
+		qfsData = fmt.Sprintf("%d %04o", info.ModTime.UnixMilli(), info.Permissions)
+	case fileinfo.TypeFile:
+		qfsData = fmt.Sprintf("%d %04o", info.ModTime.UnixMilli(), info.Permissions)
+		fileBody, err := p.Open()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = fileBody.Close() }()
+		body = fileBody
+	case fileinfo.TypeLink:
+		qfsData = fmt.Sprintf("%d ->%s", info.ModTime.UnixMilli(), info.Special)
+	default:
+		return fmt.Errorf("storing %s: can only store files, links, and directories", localPath)
+	}
 	metadata := map[string]string{
-		"qfs": fmt.Sprintf(""),
+		"qfs": qfsData,
 	}
-
-	key := filepath.Join(s.prefix, path)
-	s3path := fmt.Sprintf("s3://%s/%s", s.bucket, key)
-	uploader := manager.NewUploader(s.s3Client)
-	input := s3.PutObjectInput{
-		Bucket:   &s.bucket,
+	if body == nil {
+		body = &bytes.Buffer{}
+	}
+	uploader := manager.NewUploader(r.s3Client)
+	input := &s3.PutObjectInput{
+		Bucket:   &r.bucket,
 		Key:      &key,
-		Body:     r,
+		Body:     body,
 		Metadata: metadata,
 	}
+	_, err = uploader.Upload(ctx, input)
+	if err != nil {
+		return fmt.Errorf("upload %s: %w", r.FullPath(repoPath), err)
+	}
+	return nil
 }

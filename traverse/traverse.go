@@ -14,7 +14,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"syscall"
 )
 
 var numWorkers = 5 * runtime.NumCPU()
@@ -54,7 +53,7 @@ func (tr *Traverser) getNode(node *treeNode) error {
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
 	var err error
-	node.info, err = path.FileInfo(node.path)
+	node.info, err = path.FileInfo()
 	if err != nil {
 		return err
 	}
@@ -84,16 +83,14 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			skip = true
 		}
 		if !skip {
-			entries, err := path.ReadDir()
+			entries, err := path.DirEntries()
 			if err != nil {
 				return fmt.Errorf("read dir %s: %w", path.Path(), err)
 			}
-			sort.Slice(entries, func(i, j int) bool {
-				return entries[i].Name() < entries[j].Name()
-			})
+			sort.Strings(entries)
 			for _, e := range entries {
 				// XXX SPECIAL CASE FOR s3 "directories"
-				node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e.Name())})
+				node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e)})
 			}
 		}
 	}
@@ -160,19 +157,16 @@ func New(root string, options ...Options) (*Traverser, error) {
 		fn(tr)
 	}
 	if tr.fs == nil {
-		tr.fs = fileinfo.LocalSource
+		tr.fs = fileinfo.NewLocal(root)
 	}
-	tr.root = fileinfo.NewPath(tr.fs, root)
+	tr.root = fileinfo.NewPath(tr.fs, ".")
 
 	if tr.fs.HasStDev() {
-		lst, err := tr.root.Lstat()
+		fi, err := tr.root.FileInfo()
 		if err != nil {
-			return nil, fmt.Errorf("lstat %s: %w", tr.root.Path(), err)
+			return nil, err
 		}
-		st, ok := lst.Sys().(*syscall.Stat_t)
-		if ok && st != nil {
-			tr.rootDev = st.Dev
-		}
+		tr.rootDev = fi.Dev
 	}
 	return tr, nil
 }
@@ -204,6 +198,12 @@ func WithFilesOnly(filesOnly bool) func(*Traverser) {
 func WithNoSpecial(noSpecial bool) func(*Traverser) {
 	return func(tr *Traverser) {
 		tr.noSpecial = noSpecial
+	}
+}
+
+func WithSource(fs fileinfo.Source) func(*Traverser) {
+	return func(tr *Traverser) {
+		tr.fs = fs
 	}
 }
 

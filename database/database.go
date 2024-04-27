@@ -17,11 +17,14 @@ import (
 	"time"
 )
 
+var CurUid = os.Getuid()
+var CurGid = os.Getgid()
+
 type Options func(*Db)
 
 type Db struct {
 	path       *fileinfo.Path
-	format     dbFormat
+	format     DbFormat
 	f          io.ReadCloser
 	r          *bufio.Reader
 	lastOffset uint64
@@ -31,16 +34,14 @@ type Db struct {
 	filters    []*filter.Filter
 	filesOnly  bool
 	noSpecial  bool
-	curUid     int
-	curGid     int
 }
 
-type dbFormat int
+type DbFormat int
 
 const (
-	dbQSync = iota
-	dbQfs
-	dbRepo
+	DbQSync = iota
+	DbQfs
+	DbRepo
 )
 
 var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
@@ -53,10 +54,8 @@ func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
 		return nil, fmt.Errorf("open database %s: %w", path.Path(), err)
 	}
 	db := &Db{
-		path:   path,
-		f:      f,
-		curUid: os.Getuid(),
-		curGid: os.Getgid(),
+		path: path,
+		f:    f,
 	}
 	if err := db.readHeader(); err != nil {
 		_ = f.Close()
@@ -99,11 +98,11 @@ func (db *Db) readHeader() error {
 	}
 	header := string(first)
 	if header == "QFS 1" {
-		db.format = dbQfs
+		db.format = DbQfs
 	} else if header == "QFS REPO 1" {
-		db.format = dbRepo
+		db.format = DbRepo
 	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
-		db.format = dbQSync
+		db.format = DbQSync
 	} else {
 		return fmt.Errorf("%s is not a qfs database", db.path.Path())
 	}
@@ -147,7 +146,7 @@ func (db *Db) Close() error {
 }
 
 func (db *Db) getRow() ([]byte, error) {
-	if db.format == dbQSync {
+	if db.format == DbQSync {
 		// Discard null character
 		if err := db.skip(0); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -158,7 +157,7 @@ func (db *Db) getRow() ([]byte, error) {
 	}
 	start, err := db.readBytes(0)
 	if err != nil {
-		if db.format == dbQfs && len(start) == 0 && errors.Is(err, io.EOF) {
+		if db.format != DbQSync && len(start) == 0 && errors.Is(err, io.EOF) {
 			return nil, nil
 		}
 		return nil, err
@@ -204,11 +203,11 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 		fields := strings.Split(string(data), "\x00")
 		var f *fileinfo.FileInfo
 		switch db.format {
-		case dbQSync:
+		case DbQSync:
 			f, err = db.handleQSync(fields)
-		case dbQfs:
+		case DbQfs:
 			f, err = db.handleQfs(fields)
-		case dbRepo:
+		case DbRepo:
 			f, err = db.handleRepo(fields)
 		}
 		if err != nil {
@@ -360,9 +359,9 @@ func (db *Db) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
 		ModTime:     time.UnixMilli(int64(milliseconds)),
 		Size:        int64(size),
 		Permissions: uint16(mode),
-		Uid:         db.curUid,
-		Gid:         db.curGid,
-		Special:     fields[7],
+		Uid:         CurUid,
+		Gid:         CurGid,
+		Special:     fields[6],
 		S3Time:      time.UnixMilli(int64(s3milliseconds)),
 	}, nil
 }
@@ -385,13 +384,23 @@ func newOrEmpty[T comparable](first bool, old *T, new T, s string) string {
 	return ""
 }
 
-func WriteDb(filename string, files fileinfo.Provider) error {
+func WriteDb(filename string, files fileinfo.Provider, format DbFormat) error {
+	var header string
+	switch format {
+	case DbQSync:
+		return errors.New("qsync format not supported for write")
+	case DbQfs:
+		header = "QFS 1\n"
+	case DbRepo:
+		header = "QFS REPO 1\n"
+	}
+
 	w, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("create database \"%s\": %w", filename, err)
 	}
 	defer func() { _ = w.Close() }()
-	if _, err := w.WriteString("QFS 1\n"); err != nil {
+	if _, err := w.WriteString(header); err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
@@ -405,16 +414,30 @@ func WriteDb(filename string, files fileinfo.Provider) error {
 		uid := newOrEmpty(first, &lastUid, f.Uid, strconv.FormatInt(int64(f.Uid), 10))
 		gid := newOrEmpty(first, &lastGid, f.Gid, strconv.FormatInt(int64(f.Gid), 10))
 		first = false
-		line := []byte(strings.Join([]string{
-			f.Path,
-			string(f.FileType),
-			strconv.FormatInt(f.ModTime.UnixMilli(), 10),
-			strconv.FormatInt(f.Size, 10),
-			mode,
-			uid,
-			gid,
-			f.Special,
-		}, "\x00"))
+		var fields []string
+		if format == DbQfs {
+			fields = []string{
+				f.Path,
+				string(f.FileType),
+				strconv.FormatInt(f.ModTime.UnixMilli(), 10),
+				strconv.FormatInt(f.Size, 10),
+				mode,
+				uid,
+				gid,
+				f.Special,
+			}
+		} else {
+			fields = []string{
+				f.Path,
+				strconv.FormatInt(f.S3Time.UnixMilli(), 10),
+				string(f.FileType),
+				strconv.FormatInt(f.ModTime.UnixMilli(), 10),
+				strconv.FormatInt(f.Size, 10),
+				mode,
+				f.Special,
+			}
+		}
+		line := []byte(strings.Join(fields, "\x00"))
 		same := commonPrefix(lastLine, line)
 		lastLine = line
 		var sameStr string

@@ -28,7 +28,7 @@ func checkFile(
 ) {
 	t.Helper()
 	f := New()
-	if err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), pruneOnly); err != nil {
+	if err := f.ReadFile(fileinfo.NewPath(fileinfo.NewLocal(""), filename), pruneOnly); err != nil {
 		t.Fatalf("read %s: %v", filename, err)
 	}
 	reString := func(re *regexp.Regexp) string {
@@ -172,7 +172,7 @@ func TestFileErrors(t *testing.T) {
 	check := func(filename string, errPrefix string) {
 		t.Helper()
 		f := New()
-		err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), false)
+		err := f.ReadFile(fileinfo.NewPath(fileinfo.NewLocal(""), filename), false)
 		if err == nil {
 			t.Errorf("%s: no error", filename)
 		} else if !strings.HasPrefix(err.Error(), errPrefix) {

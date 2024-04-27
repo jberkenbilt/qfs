@@ -1,12 +1,8 @@
 package fileinfo
 
 import (
-	"fmt"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -43,9 +39,9 @@ type Provider interface {
 }
 
 type Source interface {
-	Lstat(path string) (fs.FileInfo, error)
-	Readlink(path string) (string, error)
-	ReadDir(path string) ([]os.DirEntry, error)
+	FullPath(path string) string
+	FileInfo(path string) (*FileInfo, error)
+	DirEntries(path string) ([]string, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
 	HasStDev() bool
@@ -64,19 +60,15 @@ func NewPath(source Source, path string) *Path {
 }
 
 func (p *Path) Path() string {
-	return p.path
+	return p.source.FullPath(p.path)
 }
 
-func (p *Path) Lstat() (fs.FileInfo, error) {
-	return p.source.Lstat(p.path)
+func (p *Path) FileInfo() (*FileInfo, error) {
+	return p.source.FileInfo(p.path)
 }
 
-func (p *Path) ReadLink() (string, error) {
-	return p.source.Readlink(p.path)
-}
-
-func (p *Path) ReadDir() ([]os.DirEntry, error) {
-	return p.source.ReadDir(p.path)
+func (p *Path) DirEntries() ([]string, error) {
+	return p.source.DirEntries(p.path)
 }
 
 func (p *Path) Open() (io.ReadCloser, error) {
@@ -94,58 +86,4 @@ func (p *Path) Relative(other string) *Path {
 
 func (p *Path) Join(elem string) *Path {
 	return NewPath(p.source, filepath.Join(p.path, elem))
-}
-
-func (p *Path) FileInfo(relativePath string) (*FileInfo, error) {
-	fi := &FileInfo{
-		Path:     relativePath,
-		FileType: TypeUnknown,
-	}
-	lst, err := p.Lstat()
-	if err != nil {
-		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
-		// in its directory but can't lstat, so this is not exercised.
-		return nil, fmt.Errorf("lstat %s: %w", p.Path(), err)
-	}
-	fi.ModTime = lst.ModTime().Truncate(time.Millisecond)
-	mode := lst.Mode()
-	fi.Permissions = uint16(mode.Perm())
-	st, ok := lst.Sys().(*syscall.Stat_t)
-	var major, minor uint32
-	if ok && st != nil {
-		fi.Uid = int(st.Uid)
-		fi.Gid = int(st.Gid)
-		fi.Dev = st.Dev
-		major = uint32(st.Rdev >> 8 & 0xfff)
-		minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
-	}
-	modeType := mode.Type()
-	switch {
-	case mode.IsRegular():
-		fi.FileType = TypeFile
-		fi.Size = lst.Size()
-	case modeType&os.ModeDevice != 0:
-		if modeType&os.ModeCharDevice != 0 {
-			fi.FileType = TypeCharDev
-		} else {
-			fi.FileType = TypeBlockDev
-		}
-		fi.Special = fmt.Sprintf("%d,%d", major, minor)
-	case modeType&os.ModeSocket != 0:
-		fi.FileType = TypeSocket
-	case modeType&os.ModeNamedPipe != 0:
-		fi.FileType = TypePipe
-	case modeType&os.ModeSymlink != 0:
-		fi.FileType = TypeLink
-		target, err := p.ReadLink()
-		if err != nil {
-			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
-			// readlink fails.
-			return nil, fmt.Errorf("readlink %s: %w", p.Path(), err)
-		}
-		fi.Special = target
-	case mode.IsDir():
-		fi.FileType = TypeDirectory
-	}
-	return fi, nil
 }

@@ -13,6 +13,7 @@ func (m Memory) ForEach(fn func(*fileinfo.FileInfo) error) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if err := fn(m[k]); err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}

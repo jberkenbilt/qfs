@@ -4,7 +4,6 @@ import (
 	"errors"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -29,16 +28,20 @@ func TestRoundTrip(t *testing.T) {
 	// Read qsync, write qfs, read resulting qfs. The results should be identical.
 	tmp := t.TempDir()
 	j := func(path string) *fileinfo.Path {
-		return fileinfo.NewPath(fileinfo.LocalSource, filepath.Join(tmp, path))
+		return fileinfo.NewPath(fileinfo.NewLocal(tmp), path)
 	}
-	db1, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
+	db1, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
 	check(t, err)
 	defer func() { _ = db1.Close() }()
-	err = database.WriteDb("/does/not/exist", db1)
+	err = database.WriteDb("/does/not/exist", db1, database.DbQSync)
+	if err == nil || !strings.Contains(err.Error(), "qsync format not supported for write") {
+		t.Errorf("wrong error: %v", err)
+	}
+	err = database.WriteDb("/does/not/exist", db1, database.DbQfs)
 	if err == nil || !strings.HasPrefix(err.Error(), "create database \"/does/not/exist\": ") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = database.WriteDb(j("qsync-to-qfs").Path(), db1)
+	err = database.WriteDb(j("qsync-to-qfs").Path(), db1, database.DbQfs)
 	check(t, err)
 	db2, err := database.Open(j("qsync-to-qfs"))
 	check(t, err)
@@ -48,14 +51,14 @@ func TestRoundTrip(t *testing.T) {
 		records = append(records, f)
 		return nil
 	}
-	db1, _ = database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
+	db1, _ = database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
 	err = db1.ForEach(func(*fileinfo.FileInfo) error {
 		return errors.New("propagated")
 	})
 	if err == nil || !strings.HasPrefix(err.Error(), "testdata/real.qsync at offset 84: propagated") {
 		t.Errorf("error did not propagate from callback: %v", err)
 	}
-	db1, _ = database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qsync"))
+	db1, _ = database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
 	err = db1.ForEach(load)
 	check(t, err)
 	all1 := records
@@ -90,7 +93,7 @@ func TestPartialFiles(t *testing.T) {
 			noSpecial = true
 		}
 		db, err := database.Open(
-			fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qfs"),
+			fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qfs"),
 			database.WithFilesOnly(filesOnly),
 			database.WithNoSpecial(noSpecial),
 		)
@@ -146,11 +149,12 @@ func TestErrors(t *testing.T) {
 		"testdata/bad6":       "testdata/bad6 at offset 6: EOF",
 		"testdata/bad7":       "testdata/bad7 at offset 42: wrong number of fields: 7, not 8",
 		"testdata/bad8":       "testdata/bad8 at offset 84: wrong number of fields: 8, not 9",
+		"testdata/bad9":       "testdata/bad9 at offset 48: wrong number of fields: 6, not 7",
 	}
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
 			err := func() error {
-				db, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, filename))
+				db, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal(""), filename))
 				if err != nil {
 					return err
 				}
@@ -166,7 +170,7 @@ func TestErrors(t *testing.T) {
 }
 
 func TestMemory(t *testing.T) {
-	db1, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qfs"))
+	db1, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qfs"))
 	check(t, err)
 	db2 := database.Memory{}
 	check(t, db2.Load(db1))
@@ -175,4 +179,5 @@ func TestMemory(t *testing.T) {
 	if !reflect.DeepEqual(db2, db3) {
 		t.Errorf("round trip through memory db failed")
 	}
+	_ = db3.Close() // for coverage
 }

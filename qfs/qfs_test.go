@@ -1,12 +1,11 @@
 package qfs_test
 
 import (
-	"bytes"
 	_ "embed"
 	"fmt"
 	"github.com/jberkenbilt/qfs/gztar"
 	"github.com/jberkenbilt/qfs/qfs"
-	"io"
+	"github.com/jberkenbilt/qfs/testutil"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,67 +23,8 @@ var allTypesOutLong []byte
 //go:embed testdata/files-no-link.out
 var filesOut []byte
 
-func toLines(out []byte) []string {
-	var lines []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return lines
-}
-
-func check(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-}
-
-func checkLines(t *testing.T, cmd []string, expLines []string) {
-	t.Helper()
-	stdout, stderr := withStdout(func() {
-		check(t, qfs.Run(cmd))
-	})
-	if len(stderr) > 0 {
-		t.Errorf("stderr: %s", stderr)
-	}
-	lines := toLines(stdout)
-	if !slices.Equal(lines, expLines) {
-		t.Error("wrong output")
-		for _, line := range lines {
-			t.Error(line)
-		}
-	}
-}
-
-func withStdout(fn func()) ([]byte, []byte) {
-	originalStdout := os.Stdout
-	originalStderr := os.Stderr
-	r1, w1, _ := os.Pipe()
-	os.Stdout = w1
-	r2, w2, _ := os.Pipe()
-	os.Stderr = w2
-	var buf1, buf2 bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&buf1, r1)
-		_ = r1.Close()
-		_, _ = io.Copy(&buf2, r2)
-		_ = r2.Close()
-		close(done)
-	}()
-	fn()
-	_ = w1.Close()
-	_ = w2.Close()
-	os.Stdout = originalStdout
-	os.Stderr = originalStderr
-	<-done
-	return buf1.Bytes(), buf2.Bytes()
-}
-
 func TestWithStdout(t *testing.T) {
-	b1, b2 := withStdout(func() {
+	b1, b2 := testutil.WithStdout(func() {
 		fmt.Println("potato")
 		_, _ = fmt.Fprintln(os.Stderr, "quack")
 		fmt.Println("salad")
@@ -99,7 +39,7 @@ func TestWithStdout(t *testing.T) {
 
 func TestScanStdout(t *testing.T) {
 	var err error
-	data, _ := withStdout(func() {
+	data, _ := testutil.WithStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"scan",
@@ -113,7 +53,7 @@ func TestScanStdout(t *testing.T) {
 		t.Errorf("got wrong output: %s", data)
 	}
 
-	data, _ = withStdout(func() {
+	data, _ = testutil.WithStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"scan",
@@ -184,7 +124,7 @@ func TestScanDir(t *testing.T) {
 	_ = os.Chmod(j("files/x/one/two"), 0555)
 	defer func() { _ = os.Chmod(j("files/x/one/two"), 0777) }()
 	top := j("files")
-	stdout, stderr := withStdout(func() {
+	stdout, stderr := testutil.WithStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"scan",
@@ -194,7 +134,7 @@ func TestScanDir(t *testing.T) {
 			top,
 		})
 	})
-	check(t, err)
+	testutil.Check(t, err)
 	_ = stdout
 	if !(strings.Contains(string(stderr), "removing x/one/a~") &&
 		strings.Contains(string(stderr), "remove junk "+tmp+"/files/x/one/two/b~")) {
@@ -218,7 +158,7 @@ func TestScanDir(t *testing.T) {
 		t.Errorf("got wrong stdout: %v %v %s", sawX, sawLink, lines)
 	}
 	filesDb := "testdata/files.qfs"
-	stdout, stderr = withStdout(func() {
+	stdout, stderr = testutil.WithStdout(func() {
 		err = qfs.Run([]string{
 			"qfs",
 			"diff",
@@ -227,7 +167,7 @@ func TestScanDir(t *testing.T) {
 			j("files"),
 		})
 	})
-	check(t, err)
+	testutil.Check(t, err)
 	if len(stderr) > 0 {
 		t.Errorf("stderr: %s", stderr)
 	}
@@ -254,13 +194,13 @@ add x/one/two/b~
 func TestDiff(t *testing.T) {
 	tmp := t.TempDir()
 	j := func(path string) string { return filepath.Join(tmp, path) }
-	check(t, os.MkdirAll(j("top/d1"), 0777))
-	check(t, os.WriteFile(j("top/f1"), []byte("file"), 0666))
-	check(t, os.WriteFile(j("top/f2"), []byte("file"), 0666))
-	check(t, os.WriteFile(j("top/f3"), []byte("file"), 0666))
-	check(t, os.WriteFile(j("top/f4"), []byte("file"), 0666))
-	check(t, os.Symlink("target", j("top/link")))
-	check(t, qfs.Run([]string{
+	testutil.Check(t, os.MkdirAll(j("top/d1"), 0777))
+	testutil.Check(t, os.WriteFile(j("top/f1"), []byte("file"), 0666))
+	testutil.Check(t, os.WriteFile(j("top/f2"), []byte("file"), 0666))
+	testutil.Check(t, os.WriteFile(j("top/f3"), []byte("file"), 0666))
+	testutil.Check(t, os.WriteFile(j("top/f4"), []byte("file"), 0666))
+	testutil.Check(t, os.Symlink("target", j("top/link")))
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		j("top"),
@@ -268,15 +208,15 @@ func TestDiff(t *testing.T) {
 		j("1.qfs"),
 	}))
 	time.Sleep(20 * time.Millisecond)
-	check(t, os.WriteFile(j("top/f1"), []byte("change"), 0666))
-	check(t, os.Remove(j("top/f2")))
-	check(t, os.Mkdir(j("top/f2"), 0777))
-	check(t, os.Chmod(j("top/f3"), 0444))
-	check(t, os.Remove(j("top/f4")))
-	check(t, os.Chmod(j("top/d1"), 0744))
-	check(t, os.WriteFile(j("top/f5"), []byte("new"), 0666))
+	testutil.Check(t, os.WriteFile(j("top/f1"), []byte("change"), 0666))
+	testutil.Check(t, os.Remove(j("top/f2")))
+	testutil.Check(t, os.Mkdir(j("top/f2"), 0777))
+	testutil.Check(t, os.Chmod(j("top/f3"), 0444))
+	testutil.Check(t, os.Remove(j("top/f4")))
+	testutil.Check(t, os.Chmod(j("top/d1"), 0744))
+	testutil.Check(t, os.WriteFile(j("top/f5"), []byte("new"), 0666))
 
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -295,7 +235,7 @@ func TestDiff(t *testing.T) {
 			"chmod 0744 d1",
 			"chmod 0444 f3",
 		})
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -315,7 +255,7 @@ func TestDiff(t *testing.T) {
 			"chown 517: other/socket",
 			"chown :617 qfs",
 		})
-	check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
@@ -334,7 +274,7 @@ func TestDiff(t *testing.T) {
 		"-db",
 		j("2.qfs"),
 	}))
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -392,7 +332,7 @@ func TestDiff(t *testing.T) {
 			"rm qfs/coverage/coverage.html",
 		},
 	)
-	check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
@@ -400,7 +340,7 @@ func TestDiff(t *testing.T) {
 		"-db",
 		j("2.qfs"),
 	}))
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -442,7 +382,7 @@ func TestDiff(t *testing.T) {
 			"rm yes",
 		},
 	)
-	check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
@@ -450,7 +390,7 @@ func TestDiff(t *testing.T) {
 		"-db",
 		j("2.qfs"),
 	}))
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -465,7 +405,7 @@ func TestDiff(t *testing.T) {
 			"rm other/zero",
 		},
 	)
-	check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
@@ -476,7 +416,7 @@ func TestDiff(t *testing.T) {
 		"-db",
 		j("2.qfs"),
 	}))
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -493,7 +433,7 @@ func TestDiff(t *testing.T) {
 			"rm scripts/qsutil_modules",
 		},
 	)
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -509,7 +449,7 @@ func TestDiff(t *testing.T) {
 		// is no expected difference since 2.qfs was created by applying those filters.
 		nil,
 	)
-	check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.Run([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
@@ -518,7 +458,7 @@ func TestDiff(t *testing.T) {
 		"-db",
 		j("2.qfs"),
 	}))
-	checkLines(
+	testutil.CheckLines(
 		t,
 		[]string{
 			"qfs",
@@ -538,7 +478,7 @@ func TestDiff(t *testing.T) {
 func TestCLI(t *testing.T) {
 	checkCli := func(cmd []string, expErr string) {
 		var err error
-		stdout, stderr := withStdout(func() {
+		stdout, stderr := testutil.WithStdout(func() {
 			err = qfs.Run(cmd)
 		})
 		if err == nil {
@@ -572,11 +512,11 @@ func TestHelpVersion(t *testing.T) {
 	}
 	for arg, text := range cases {
 		t.Run(arg, func(t *testing.T) {
-			stdout, stderr := withStdout(func() {
+			stdout, stderr := testutil.WithStdout(func() {
 				defer func() {
 					_ = recover()
 				}()
-				check(t, qfs.Run([]string{"qfs", arg}))
+				testutil.Check(t, qfs.Run([]string{"qfs", arg}))
 			})
 			if !strings.Contains(string(stdout), text) {
 				t.Errorf("didn't see expected text")

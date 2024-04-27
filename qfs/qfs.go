@@ -229,7 +229,7 @@ func argFilter(q *parser, arg string) error {
 	filename := q.args[q.arg]
 	q.arg++
 	f := filter.New()
-	err := f.ReadFile(fileinfo.NewPath(fileinfo.LocalSource, filename), pruneOnly)
+	err := f.ReadFile(fileinfo.NewPath(fileinfo.NewLocal(""), filename), pruneOnly)
 	if err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func (p *parser) doScan() error {
 	}
 	defer func() { _ = files.Close() }()
 	if p.db != "" {
-		return database.WriteDb(p.db, files)
+		return database.WriteDb(p.db, files, database.DbQfs)
 	}
 	return files.ForEach(func(f *fileinfo.FileInfo) error {
 		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
