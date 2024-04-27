@@ -164,3 +164,15 @@ func TestErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestMemory(t *testing.T) {
+	db1, err := database.Open(fileinfo.NewPath(fileinfo.LocalSource, "testdata/real.qfs"))
+	check(t, err)
+	db2 := database.Memory{}
+	check(t, db2.Load(db1))
+	db3 := database.Memory{}
+	check(t, db3.Load(db2))
+	if !reflect.DeepEqual(db2, db3) {
+		t.Errorf("round trip through memory db failed")
+	}
+}
