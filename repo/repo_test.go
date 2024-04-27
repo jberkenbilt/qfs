@@ -1,6 +1,7 @@
 package repo_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,10 +15,12 @@ import (
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
 	"github.com/jberkenbilt/qfs/traverse"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -168,6 +171,16 @@ func TestRepo(t *testing.T) {
 		}
 	}
 
+	// Store errors
+	err = r.Store("/nope", "nope")
+	if err == nil || !strings.Contains(err.Error(), "/nope") {
+		t.Errorf("wrong error: %v", err)
+	}
+	err = r.Store("/dev/null", "nope")
+	if err == nil || !strings.Contains(err.Error(), "can only store files") {
+		t.Errorf("wrong error: %v", err)
+	}
+
 	// Check one key manually to make sure it is in the right place is correct. For
 	// the rest, rely on traversal.
 	headInput := &s3.HeadObjectInput{
@@ -307,5 +320,53 @@ func TestRepo(t *testing.T) {
 	if !slices.Equal(o1, o2) {
 		t.Errorf("reference didn't get back in sync")
 		fmt.Printf("%s---%s", o1, o2)
+	}
+
+	// Change S3 to exercise remaining S3 functions and recheck database
+	delete(mem2, "file1")
+	testutil.Check(t, r.Remove("file1"))
+	// Remove is idempotent, so no error to do it again.
+	testutil.Check(t, r.Remove("file1"))
+	r, err = repo.New(
+		TestBucket,
+		"home",
+		repo.WithS3Client(s3Client),
+		repo.WithDatabase(mem2),
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	tr, err = traverse.New("", traverse.WithSource(r))
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	_, err = tr.Traverse(
+		func(s string) {
+			t.Errorf("notify: %v", s)
+		},
+		func(err error) {
+			t.Errorf("error: %v", err)
+		},
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	if r.DbChanged() {
+		t.Errorf("db changed")
+	}
+
+	_, err = r.Open("nope")
+	if err == nil || !strings.Contains(err.Error(), "get object s3://qfs-test-repo/home/nope:") {
+		t.Errorf("wrong error: %v", err)
+	}
+	rd, err := r.Open("dir1/potato")
+	testutil.Check(t, err)
+	defer func() { _ = rd.Close() }()
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, rd)
+	testutil.Check(t, err)
+	_ = rd.Close()
+	if s := buf.String(); s != "salad\n" {
+		t.Errorf("got wrong body: %s", s)
 	}
 }

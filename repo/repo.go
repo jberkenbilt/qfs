@@ -51,6 +51,8 @@ func New(bucket, prefix string, options ...Options) (*Repo, error) {
 		fn(r)
 	}
 	if r.s3Client == nil {
+		// TEST: NOT COVERED. We don't have any automated tests that use a real S3
+		// bucket.
 		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
 			return nil, err
@@ -131,6 +133,7 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		output, err = r.s3Client.HeadObject(ctx, input)
 	}
 	if err != nil {
+		// TEST: NOT COVERED
 		return nil, fmt.Errorf("get information for %s: %w", r.FullPath(path), err)
 	}
 	var qfsData string
@@ -197,7 +200,8 @@ func (r *Repo) DirEntries(path string) ([]fileinfo.DirEntry, error) {
 	for p.HasMorePages() {
 		output, err := p.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list s3://%s/%s: %w", r.bucket, key, err)
+			// TEST: NOT COVERED
+			return nil, fmt.Errorf("list %s: %w", r.FullPath(path), err)
 		}
 		// qfs stores metadata on directories by creating empty keys whose paths end with
 		// /. If you have a key x/y/, when you list x/ with delimiter /, you will see
@@ -255,6 +259,7 @@ func (r *Repo) Remove(path string) error {
 	}
 	_, err := r.s3Client.DeleteObject(ctx, input)
 	if err != nil {
+		// TEST: NOT COVERED. DeleteObject is idempotent.
 		return fmt.Errorf("delete object %s: %w", r.FullPath(path), err)
 	}
 	return nil
@@ -283,6 +288,7 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 		qfsData = fmt.Sprintf("%d %04o", info.ModTime.UnixMilli(), info.Permissions)
 		fileBody, err := p.Open()
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		defer func() { _ = fileBody.Close() }()
@@ -307,6 +313,7 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 	}
 	_, err = uploader.Upload(ctx, input)
 	if err != nil {
+		// TEST: NOT COVERED
 		return fmt.Errorf("upload %s: %w", r.FullPath(repoPath), err)
 	}
 	return nil
