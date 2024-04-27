@@ -9,11 +9,9 @@ import (
 	"golang.org/x/exp/maps"
 	"net"
 	"os"
-	"os/user"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,24 +19,14 @@ import (
 )
 
 func TestTraverse(t *testing.T) {
-	u, err := user.Current()
-	if err != nil {
-		t.Fatalf("unable to get current user: %v", err)
-	}
-	uid := func() uint32 {
-		u, _ := strconv.Atoi(u.Uid)
-		return uint32(u)
-	}()
-	gid := func() uint32 {
-		u, _ := strconv.Atoi(u.Gid)
-		return uint32(u)
-	}()
+	uid := os.Getuid()
+	gid := os.Getgid()
 	if uid == 0 || gid == 0 {
 		t.Fatal("this test must not be run as root")
 	}
 
 	tmp := t.TempDir()
-	err = os.WriteFile(filepath.Join(tmp, "potato"), []byte("salad"), 0644)
+	err := os.WriteFile(filepath.Join(tmp, "potato"), []byte("salad"), 0644)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -116,7 +104,7 @@ func TestTraverse(t *testing.T) {
 	}
 	sort.Strings(expKeys)
 	if !slices.Equal(expKeys, keys) {
-		t.Errorf("wrong entries: %#v", keys)
+		t.Fatalf("wrong entries: %#v", keys)
 	}
 	if all["quack"].Special != "potato" || all["baa"].Special != "salad" {
 		t.Errorf("wrong link targets: %#v, %#v", all["quack"], all["baa"])

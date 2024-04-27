@@ -9,14 +9,12 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 )
 
 var numWorkers = 5 * runtime.NumCPU()
@@ -28,18 +26,10 @@ type Result struct {
 }
 
 type treeNode struct {
-	path        string
-	fileType    fileinfo.FileType
-	modTime     time.Time
-	size        int64
-	permissions uint16
-	uid         uint32
-	gid         uint32
-	target      string
-	major       uint32
-	minor       uint32
-	children    []*treeNode
-	included    bool
+	path     string
+	info     *fileinfo.FileInfo
+	children []*treeNode
+	included bool
 }
 
 type Traverser struct {
@@ -59,52 +49,18 @@ type Traverser struct {
 	noSpecial  bool
 }
 
-func (n *treeNode) toFileInfo() *fileinfo.FileInfo {
-	var special string
-	if n.fileType == fileinfo.TypeLink {
-		special = n.target
-	} else if n.fileType == fileinfo.TypeBlockDev || n.fileType == fileinfo.TypeCharDev {
-		special = fmt.Sprintf("%d,%d", n.major, n.minor)
-	}
-	return &fileinfo.FileInfo{
-		Path:        n.path,
-		FileType:    n.fileType,
-		ModTime:     n.modTime,
-		Size:        n.size,
-		Permissions: n.permissions,
-		Uid:         n.uid,
-		Gid:         n.gid,
-		Special:     special,
-	}
-}
-
 func (tr *Traverser) getNode(node *treeNode) error {
 	path := tr.root.Join(node.path)
 	included, group := filter.IsIncluded(node.path, tr.filters...)
 	node.included = included
-	node.fileType = fileinfo.TypeUnknown
-	lst, err := path.Lstat()
+	var err error
+	node.info, err = path.FileInfo(node.path)
 	if err != nil {
-		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
-		// in its directory but can't lstat, so this is not exercised.
-		return fmt.Errorf("lstat %s: %w", path.Path(), err)
+		return err
 	}
-	node.modTime = lst.ModTime().Truncate(time.Millisecond)
-	mode := lst.Mode()
-	node.permissions = uint16(mode.Perm())
-	st, ok := lst.Sys().(*syscall.Stat_t)
-	if ok && st != nil {
-		node.uid = st.Uid
-		node.gid = st.Gid
-		node.major = uint32(st.Rdev >> 8 & 0xfff)
-		node.minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
-	}
-	modeType := mode.Type()
-	isSpecial := false
-	switch {
-	case mode.IsRegular():
-		node.fileType = fileinfo.TypeFile
-		node.size = lst.Size()
+	ft := node.info.FileType
+	isSpecial := !(ft == fileinfo.TypeFile || ft == fileinfo.TypeDirectory || ft == fileinfo.TypeLink)
+	if ft == fileinfo.TypeFile {
 		if group == filter.Junk && tr.cleanup {
 			node.included = false
 			if err = tr.root.Join(node.path).Remove(); err != nil {
@@ -113,58 +69,38 @@ func (tr *Traverser) getNode(node *treeNode) error {
 				tr.notifyChan <- fmt.Sprintf("removing %s", node.path)
 			}
 		}
-	case modeType&os.ModeDevice != 0:
-		isSpecial = true
-		if modeType&os.ModeCharDevice != 0 {
-			node.fileType = fileinfo.TypeCharDev
-		} else {
-			node.fileType = fileinfo.TypeBlockDev
-		}
-	case modeType&os.ModeSocket != 0:
-		isSpecial = true
-		node.fileType = fileinfo.TypeSocket
-	case modeType&os.ModeNamedPipe != 0:
-		isSpecial = true
-		node.fileType = fileinfo.TypePipe
-	case modeType&os.ModeSymlink != 0:
-		node.fileType = fileinfo.TypeLink
-		target, err := path.ReadLink()
-		if err != nil {
-			// TEST: CAN'T COVER. We have no way to create a link we can lstat but for which
-			// readlink fails.
-			return fmt.Errorf("readlink %s: %w", path.Path(), err)
-		}
-		node.target = target
-	case mode.IsDir():
+	} else if ft == fileinfo.TypeDirectory {
+		skip := false
 		if !included && group == filter.Prune {
 			// Don't traverse into pruned directories
-			break
+			skip = true
 		}
-		if tr.sameDev && st != nil && tr.rootDev != st.Dev {
+		if tr.sameDev && tr.fs.HasStDev() && tr.rootDev != node.info.Dev {
 			// TEST: CAN'T COVER. This is on a different device. Exclude and don't traverse
 			// into it. This is not exercised in the test suite as it is difficult without
 			// root/admin privileges to construct a scenario where crossing device boundaries
 			// will happen.
 			node.included = false
-			break
+			skip = true
 		}
-		node.fileType = fileinfo.TypeDirectory
-		entries, err := path.ReadDir()
-		if err != nil {
-			return fmt.Errorf("read dir %s: %w", path.Path(), err)
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Name() < entries[j].Name()
-		})
-		for _, e := range entries {
-			// XXX SPECIAL CASE FOR s3 "directories"
-			node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e.Name())})
+		if !skip {
+			entries, err := path.ReadDir()
+			if err != nil {
+				return fmt.Errorf("read dir %s: %w", path.Path(), err)
+			}
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].Name() < entries[j].Name()
+			})
+			for _, e := range entries {
+				// XXX SPECIAL CASE FOR s3 "directories"
+				node.children = append(node.children, &treeNode{path: filepath.Join(node.path, e.Name())})
+			}
 		}
 	}
 	if isSpecial && (tr.noSpecial || tr.filesOnly) {
 		node.included = false
 	}
-	if node.fileType == fileinfo.TypeDirectory && tr.filesOnly {
+	if ft == fileinfo.TypeDirectory && tr.filesOnly {
 		// Special are excluded above, and links are included with filesOnly.
 		node.included = false
 	}
@@ -333,7 +269,7 @@ func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
 		// directory itself won't appear. This could be changed if desired, but it would
 		// involve an extra tree traversal.
 		if cur.included {
-			if err := fn(cur.toFileInfo()); err != nil {
+			if err := fn(cur.info); err != nil {
 				return err
 			}
 		}

@@ -31,8 +31,8 @@ type Db struct {
 	filters    []*filter.Filter
 	filesOnly  bool
 	noSpecial  bool
-	curUid     uint32
-	curGid     uint32
+	curUid     int
+	curGid     int
 }
 
 type dbFormat int
@@ -55,8 +55,8 @@ func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
 	db := &Db{
 		path:   path,
 		f:      f,
-		curUid: uint32(os.Getuid()),
-		curGid: uint32(os.Getgid()),
+		curUid: os.Getuid(),
+		curGid: os.Getgid(),
 	}
 	if err := db.readHeader(); err != nil {
 		_ = f.Close()
@@ -301,8 +301,8 @@ func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 		ModTime:     time.Unix(int64(seconds), 0),
 		Size:        size,
 		Permissions: perms,
-		Uid:         uint32(uid),
-		Gid:         uint32(gid),
+		Uid:         uid,
+		Gid:         gid,
 		Special:     special,
 	}, nil
 }
@@ -332,8 +332,8 @@ func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 		ModTime:     time.UnixMilli(int64(milliseconds)),
 		Size:        int64(size),
 		Permissions: uint16(mode),
-		Uid:         uint32(uid),
-		Gid:         uint32(gid),
+		Uid:         uid,
+		Gid:         gid,
 		Special:     fields[7],
 	}, nil
 }
@@ -397,8 +397,8 @@ func WriteDb(filename string, files fileinfo.Provider) error {
 	}
 	var lastLine []byte
 	var lastMode uint16
-	var lastUid uint32
-	var lastGid uint32
+	var lastUid int
+	var lastGid int
 	first := true
 	err = files.ForEach(func(f *fileinfo.FileInfo) error {
 		mode := newOrEmpty(first, &lastMode, f.Permissions, fmt.Sprintf("0%o", f.Permissions))
