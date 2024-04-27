@@ -24,6 +24,13 @@ type Repo struct {
 	prefix        string
 }
 
+type repoFileInfo struct {
+	name    string
+	size    int64
+	mode    fs.FileMode
+	modTime time.Time
+}
+
 type repoDirEntry struct {
 	name     string
 	isDir    bool
@@ -52,13 +59,6 @@ func (di *repoDirEntry) Info() (fs.FileInfo, error) {
 		panic("implement me")
 	}
 	return di.fileInfo, nil
-}
-
-type repoFileInfo struct {
-	name    string
-	size    int64
-	mode    fs.FileMode
-	modTime time.Time
 }
 
 func (fi *repoFileInfo) Name() string {
