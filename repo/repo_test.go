@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jberkenbilt/qfs/database"
+	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/gztar"
 	"github.com/jberkenbilt/qfs/qfs"
 	"github.com/jberkenbilt/qfs/repo"
@@ -16,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
+	"time"
 )
 
 const (
@@ -197,10 +200,10 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	mem := database.Memory{}
-	testutil.Check(t, mem.Load(files))
-	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem, database.DbQfs))
-	testutil.Check(t, database.WriteDb(j("repo-from-s3"), mem, database.DbRepo))
+	mem1 := database.Memory{}
+	testutil.Check(t, mem1.Load(files))
+	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem1, database.DbQfs))
+	testutil.Check(t, database.WriteDb(j("repo-from-s3"), mem1, database.DbRepo))
 	stdout, stderr := testutil.WithStdout(func() {
 		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3"), j("repo-from-s3")})
 		if err != nil {
@@ -218,5 +221,91 @@ func TestRepo(t *testing.T) {
 	})
 	if len(stderr) > 0 || len(stdout) > 0 {
 		t.Errorf("output: %s\n%s", stdout, stderr)
+	}
+
+	// Traverse again with the reference database. We should get 100% cache hits.
+	r, err = repo.New(
+		TestBucket,
+		"home",
+		repo.WithS3Client(s3Client),
+		repo.WithDatabase(mem1),
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	tr, err = traverse.New("", traverse.WithSource(r))
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	files, err = tr.Traverse(
+		func(s string) {
+			t.Errorf("notify: %v", s)
+		},
+		func(err error) {
+			t.Errorf("error: %v", err)
+		},
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	if r.DbChanged() {
+		t.Errorf("db changed")
+	}
+	mem2 := database.Memory{}
+	_ = mem2.Load(files)
+	if !reflect.DeepEqual(mem1, mem2) {
+		t.Errorf("databases are inconsistent")
+		_ = fileinfo.PrintDb(mem1, true)
+		fmt.Println("---")
+		_ = fileinfo.PrintDb(mem2, true)
+	}
+	// Modify the database and make sure gets back in sync
+	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
+	delete(mem2, "file1")
+	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
+	r, err = repo.New(
+		TestBucket,
+		"home",
+		repo.WithS3Client(s3Client),
+		repo.WithDatabase(mem2),
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	tr, err = traverse.New("", traverse.WithSource(r))
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	files, err = tr.Traverse(
+		func(s string) {
+			t.Errorf("notify: %v", s)
+		},
+		func(err error) {
+			t.Errorf("error: %v", err)
+		},
+	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	if !r.DbChanged() {
+		t.Errorf("db didn't change")
+	}
+	mem3 := database.Memory{}
+	_ = mem3.Load(files)
+	o1, _ := testutil.WithStdout(func() {
+		_ = fileinfo.PrintDb(mem1, true)
+	})
+	o2, _ := testutil.WithStdout(func() {
+		_ = fileinfo.PrintDb(mem2, true)
+	})
+	o3, _ := testutil.WithStdout(func() {
+		_ = fileinfo.PrintDb(mem3, true)
+	})
+	if !slices.Equal(o1, o3) {
+		t.Errorf("new result doesn't match old result")
+	}
+	if !slices.Equal(o1, o2) {
+		t.Errorf("reference didn't get back in sync")
+		fmt.Printf("%s---%s", o1, o2)
 	}
 }

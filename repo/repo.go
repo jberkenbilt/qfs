@@ -33,9 +33,12 @@ type Repo struct {
 	s3Client *s3.Client
 	bucket   string
 	prefix   string
-	m        sync.Mutex
-	modTimes map[string]time.Time // needs mutex
-	//db       database.Memory      // needs mutex
+	// Everything below requires mutex protection.
+	m         sync.Mutex
+	modTimes  map[string]time.Time
+	db        database.Memory
+	dbChanged bool
+	seen      map[string]struct{}
 }
 
 func New(bucket, prefix string, options ...Options) (*Repo, error) {
@@ -69,13 +72,49 @@ func WithS3Client(client *s3.Client) func(*Repo) {
 	}
 }
 
+func WithDatabase(db database.Memory) func(*Repo) {
+	return func(r *Repo) {
+		r.db = db
+		r.seen = map[string]struct{}{}
+	}
+}
+
 func (r *Repo) FullPath(path string) string {
 	return fmt.Sprintf("s3://%s/%s", r.bucket, filepath.Join(r.prefix, path))
 }
 
 func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
-	// XXX Still need to work in cached database
 	key := filepath.Join(r.prefix, path)
+	// If we have a reference database and the s3 timestamp matches what is in the
+	// database, we can use the cached result instead of calling out to S3. Under any
+	// other conditions, we will call out to S3 and then update the database.
+	var s3Time *time.Time
+	var dbEntry *fileinfo.FileInfo
+	r.withLock(func() {
+		t, haveTime := r.modTimes[key]
+		if !haveTime {
+			t, haveTime = r.modTimes[key+"/"]
+		}
+		if haveTime {
+			s3Time = &t
+		}
+		if s3Time == nil || r.db == nil {
+			return
+		}
+		r.seen[path] = struct{}{}
+		e, haveEntry := r.db[path]
+		if haveEntry {
+			if s3Time.Equal(e.S3Time) {
+				dbEntry = e
+			} else {
+				r.dbChanged = true
+				delete(r.db, path)
+			}
+		}
+	})
+	if dbEntry != nil {
+		return dbEntry, nil
+	}
 	input := &s3.HeadObjectInput{
 		Bucket: &r.bucket,
 		Key:    &key,
@@ -106,7 +145,12 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		Permissions: 0777,
 		Uid:         database.CurUid,
 		Gid:         database.CurGid,
-		S3Time:      *output.LastModified,
+		S3Time:      output.LastModified.Truncate(time.Millisecond),
+	}
+	// HeadObject returns time with a lower granularity, so use the one we got from
+	// ListObjectsV2 if possible.
+	if s3Time != nil {
+		fi.S3Time = *s3Time
 	}
 	if qfsData != "" {
 		if m := metadataRe.FindStringSubmatch(qfsData); m != nil {
@@ -128,6 +172,12 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		} else {
 			fi.FileType = fileinfo.TypeFile
 		}
+	}
+	if r.db != nil {
+		r.withLock(func() {
+			r.dbChanged = true
+			r.db[path] = fi
+		})
 	}
 	return fi, nil
 }
@@ -169,15 +219,19 @@ func (r *Repo) DirEntries(path string) ([]fileinfo.DirEntry, error) {
 				entries = append(entries, fileinfo.DirEntry{Name: filepath.Base(*x.Key)})
 			}
 			r.withLock(func() {
-				r.modTimes[*x.Key] = *x.LastModified
+				r.modTimes[*x.Key] = x.LastModified.Truncate(time.Millisecond)
 			})
 		}
 	}
 	return entries, nil
 }
 
-func (r *Repo) HasStDev() bool {
+func (*Repo) HasStDev() bool {
 	return false
+}
+
+func (*Repo) IsS3() bool {
+	return true
 }
 
 func (r *Repo) Open(path string) (io.ReadCloser, error) {
@@ -256,4 +310,20 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 		return fmt.Errorf("upload %s: %w", r.FullPath(repoPath), err)
 	}
 	return nil
+}
+
+func (r *Repo) DbChanged() bool {
+	return r.dbChanged
+}
+
+func (r *Repo) Finish() {
+	// This is single-threaded, so we don't need the lock. Remove anything from the
+	// database that we didn't see during traversal.
+	if r.db != nil {
+		for k := range r.db {
+			if _, ok := r.seen[k]; !ok {
+				delete(r.db, k)
+			}
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package fileinfo
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"time"
@@ -51,6 +52,8 @@ type Source interface {
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
 	HasStDev() bool
+	IsS3() bool
+	Finish()
 }
 
 type Path struct {
@@ -92,4 +95,22 @@ func (p *Path) Relative(other string) *Path {
 
 func (p *Path) Join(elem string) *Path {
 	return NewPath(p.source, filepath.Join(p.path, elem))
+}
+
+func PrintDb(p Provider, long bool) error {
+	return p.ForEach(func(f *FileInfo) error {
+		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
+		if long {
+			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
+		}
+		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+		if f.FileType == TypeLink {
+			fmt.Printf(" -> %s", f.Special)
+		} else if f.FileType == TypeBlockDev || f.FileType == TypeCharDev {
+			fmt.Printf(" %s", f.Special)
+		}
+		fmt.Println("")
+		return nil
+	})
+
 }

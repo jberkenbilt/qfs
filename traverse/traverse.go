@@ -281,13 +281,17 @@ func (tr *Traverser) Traverse(
 		}
 	}()
 
-	tree := &treeNode{path: "."}
+	tree := &treeNode{
+		path:  ".",
+		s3Dir: tr.fs.IsS3(),
+	}
 	tr.traverse(tree)
 	close(tr.workChan)
 	workerWait.Wait()
 	close(tr.errChan)
 	close(tr.notifyChan)
 	wg.Wait()
+	tr.fs.Finish()
 	return &Result{
 		tree: tree,
 	}, nil

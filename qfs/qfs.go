@@ -319,20 +319,7 @@ func (p *parser) doScan() error {
 	if p.db != "" {
 		return database.WriteDb(p.db, files, database.DbQfs)
 	}
-	return files.ForEach(func(f *fileinfo.FileInfo) error {
-		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
-		if p.long {
-			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
-		}
-		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-		if f.FileType == fileinfo.TypeLink {
-			fmt.Printf(" -> %s", f.Special)
-		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
-			fmt.Printf(" %s", f.Special)
-		}
-		fmt.Println("")
-		return nil
-	})
+	return fileinfo.PrintDb(files, p.long)
 }
 
 func (p *parser) doDiff() error {

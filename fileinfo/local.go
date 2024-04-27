@@ -43,6 +43,10 @@ func (*LocalSource) HasStDev() bool {
 	return true
 }
 
+func (*LocalSource) IsS3() bool {
+	return false
+}
+
 func (ls *LocalSource) Open(path string) (io.ReadCloser, error) {
 	return os.Open(ls.FullPath(path))
 }
@@ -104,4 +108,7 @@ func (ls *LocalSource) FileInfo(path string) (*FileInfo, error) {
 		fi.FileType = TypeDirectory
 	}
 	return fi, nil
+}
+
+func (*LocalSource) Finish() {
 }
