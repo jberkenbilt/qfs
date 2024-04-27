@@ -94,8 +94,8 @@ func (s *Scan) Run() (fileinfo.Provider, error) {
 			},
 		)
 	} else {
-		files, err = database.Open(
-			fileinfo.NewPath(fileinfo.NewLocal(""), s.input),
+		files, err = database.OpenFile(
+			s.input,
 			database.WithFilters(s.filters),
 			database.WithFilesOnly(s.filesOnly),
 			database.WithNoSpecial(s.noSpecial),

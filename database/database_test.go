@@ -4,18 +4,13 @@ import (
 	"errors"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/testutil"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
-
-func check(t *testing.T, e error) {
-	t.Helper()
-	if e != nil {
-		t.Fatal(e.Error())
-	}
-}
 
 func checkError(t *testing.T, e error, text string) {
 	t.Helper()
@@ -27,11 +22,11 @@ func checkError(t *testing.T, e error, text string) {
 func TestRoundTrip(t *testing.T) {
 	// Read qsync, write qfs, read resulting qfs. The results should be identical.
 	tmp := t.TempDir()
-	j := func(path string) *fileinfo.Path {
-		return fileinfo.NewPath(fileinfo.NewLocal(tmp), path)
+	j := func(path string) string {
+		return filepath.Join(tmp, path)
 	}
-	db1, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
-	check(t, err)
+	db1, err := database.OpenFile("testdata/real.qsync")
+	testutil.Check(t, err)
 	defer func() { _ = db1.Close() }()
 	err = database.WriteDb("/does/not/exist", db1, database.DbQSync)
 	if err == nil || !strings.Contains(err.Error(), "qsync format not supported for write") {
@@ -41,30 +36,32 @@ func TestRoundTrip(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "create database \"/does/not/exist\": ") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = database.WriteDb(j("qsync-to-qfs").Path(), db1, database.DbQfs)
-	check(t, err)
-	db2, err := database.Open(j("qsync-to-qfs"))
-	check(t, err)
+	err = database.WriteDb(j("qsync-to-qfs"), db1, database.DbQfs)
+	testutil.Check(t, err)
+	db2, err := database.OpenFile(j("qsync-to-qfs"))
+	testutil.Check(t, err)
 	defer func() { _ = db2.Close() }()
 	var records []*fileinfo.FileInfo
 	load := func(f *fileinfo.FileInfo) error {
 		records = append(records, f)
 		return nil
 	}
-	db1, _ = database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
+	db1, _ = database.OpenFile("testdata/real.qsync")
+	defer func() { _ = db1.Close() }()
 	err = db1.ForEach(func(*fileinfo.FileInfo) error {
 		return errors.New("propagated")
 	})
 	if err == nil || !strings.HasPrefix(err.Error(), "testdata/real.qsync at offset 84: propagated") {
 		t.Errorf("error did not propagate from callback: %v", err)
 	}
-	db1, _ = database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qsync"))
+	db1, _ = database.OpenFile("testdata/real.qsync")
+	defer func() { _ = db1.Close() }()
 	err = db1.ForEach(load)
-	check(t, err)
+	testutil.Check(t, err)
 	all1 := records
 	records = nil
 	err = db2.ForEach(load)
-	check(t, err)
+	testutil.Check(t, err)
 	all2 := records
 	if !reflect.DeepEqual(all1, all2) {
 		t.Error("round trip failed")
@@ -92,12 +89,12 @@ func TestPartialFiles(t *testing.T) {
 		if i == 2 {
 			noSpecial = true
 		}
-		db, err := database.Open(
-			fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qfs"),
+		db, err := database.OpenFile(
+			"testdata/real.qfs",
 			database.WithFilesOnly(filesOnly),
 			database.WithNoSpecial(noSpecial),
 		)
-		check(t, err)
+		testutil.Check(t, err)
 		var fileKeys []string
 		sawSpecial := false
 		sawDir := false
@@ -118,7 +115,8 @@ func TestPartialFiles(t *testing.T) {
 			}
 			return nil
 		})
-		check(t, err)
+		testutil.Check(t, err)
+		_ = db.Close()
 		if i == 0 {
 			expFileKeys = fileKeys
 		} else {
@@ -138,7 +136,7 @@ func TestPartialFiles(t *testing.T) {
 
 func TestErrors(t *testing.T) {
 	cases := map[string]string{
-		"/does/not/exist":     "open database /does/not/exist:",
+		"/does/not/exist":     "open /does/not/exist:",
 		"database.go":         "database.go is not a qfs database",
 		"testdata/no-newline": "testdata/no-newline at offset 0: EOF",
 		"testdata/bad1":       "testdata/bad1 at offset 6: expected length[/same]",
@@ -154,7 +152,7 @@ func TestErrors(t *testing.T) {
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
 			err := func() error {
-				db, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal(""), filename))
+				db, err := database.OpenFile(filename)
 				if err != nil {
 					return err
 				}
@@ -164,20 +162,21 @@ func TestErrors(t *testing.T) {
 				})
 			}()
 			checkError(t, err, text)
-
 		})
 	}
 }
 
 func TestMemory(t *testing.T) {
-	db1, err := database.Open(fileinfo.NewPath(fileinfo.NewLocal("testdata"), "real.qfs"))
-	check(t, err)
+	db1, err := database.OpenFile("testdata/real.qfs")
+	testutil.Check(t, err)
+	defer func() { _ = db1.Close() }()
 	db2 := database.Memory{}
-	check(t, db2.Load(db1))
+	testutil.Check(t, db2.Load(db1))
+	defer func() { _ = db2.Close() }()
 	db3 := database.Memory{}
-	check(t, db3.Load(db2))
+	testutil.Check(t, db3.Load(db2))
+	defer func() { _ = db3.Close() }()
 	if !reflect.DeepEqual(db2, db3) {
 		t.Errorf("round trip through memory db failed")
 	}
-	_ = db3.Close() // for coverage
 }
