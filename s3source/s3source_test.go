@@ -47,8 +47,10 @@ func startMinio() {
 		panic(err.Error())
 	}
 	if started {
+		fmt.Println("Run ./bin/start-minio to speed testing and persist state after test.")
 		err = s.Init()
 		if err != nil {
+			_ = testS3.s3.Stop()
 			panic(err.Error())
 		}
 	}
