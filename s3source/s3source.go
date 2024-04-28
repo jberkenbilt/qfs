@@ -13,6 +13,8 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -337,6 +339,50 @@ func (s *S3Source) Store(localPath string, repoPath string) error {
 		return fmt.Errorf("upload %s: %w", s.FullPath(repoPath), err)
 	}
 	return nil
+}
+
+// Retrieve retrieves a file from the repository. No action is performed
+// If localPath has the same size and modification time as indicated in the repo.
+// The return value indicates whether the file was actually downloaded.
+func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
+	srcPath := fileinfo.NewPath(s, repoPath)
+	destPath := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
+	srcInfo, err := srcPath.FileInfo()
+	if err != nil {
+		return false, err
+	}
+	requiresCopy, err := fileinfo.RequiresCopy(srcPath, destPath)
+	if err != nil {
+		return false, err
+	}
+	if !requiresCopy {
+		return false, nil
+	}
+	f, err := os.Create(localPath)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	key := filepath.Join(s.prefix, repoPath)
+	downloader := manager.NewDownloader(s.s3Client)
+	input := &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	}
+	_, err = downloader.Download(ctx, f, input)
+	if err != nil {
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Chtimes(localPath, time.Time{}, srcInfo.ModTime); err != nil {
+		return false, fmt.Errorf("set times for %s: %w", localPath, err)
+	}
+	if err := os.Chmod(localPath, fs.FileMode(srcInfo.Permissions)); err != nil {
+		return false, fmt.Errorf("set mode for %s: %w", localPath, err)
+	}
+	return true, nil
 }
 
 func (s *S3Source) DbChanged() bool {

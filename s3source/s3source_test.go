@@ -339,4 +339,38 @@ func TestS3Source(t *testing.T) {
 		fmt.Println("---")
 		_ = fileinfo.PrintDb(mem1, true)
 	}
+
+	// Exercise retrieval
+	srcPath := fileinfo.NewPath(src, "dir1/potato")
+	destPath := fileinfo.NewPath(fileinfo.NewLocal(tmp), "files/dir1/potato")
+	if x, err := fileinfo.RequiresCopy(srcPath, destPath); err != nil {
+		t.Fatalf(err.Error())
+	} else if x {
+		t.Errorf("initially requires copy")
+	}
+	retrieved, err := src.Retrieve("dir1/potato", destPath.Path())
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+	if retrieved {
+		t.Error("shouldn't have retrieved file")
+	}
+	testutil.Check(t, os.WriteFile(destPath.Path(), []byte("something new"), 0666))
+	retrieved, err = src.Retrieve("dir1/potato", destPath.Path())
+	if err != nil {
+		t.Error(err.Error())
+	}
+	if !retrieved {
+		t.Error("didn't retrieve file")
+	}
+	data, err := os.ReadFile(destPath.Path())
+	testutil.Check(t, err)
+	if string(data) != "salad\n" {
+		t.Errorf("wrong body: %s", data)
+	}
+	if x, err := fileinfo.RequiresCopy(srcPath, destPath); err != nil {
+		t.Fatalf(err.Error())
+	} else if x {
+		t.Errorf("initially requires copy")
+	}
 }

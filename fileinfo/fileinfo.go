@@ -1,8 +1,10 @@
 package fileinfo
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -113,4 +115,36 @@ func PrintDb(p Provider, long bool) error {
 		return nil
 	})
 
+}
+
+// RequiresCopy returns true when src is a plain file and dest is other than a
+// plain file with the same size and modification time. These are the only
+// conditions under which an actual download/copy is required. In all other
+// cases, the operation to bring the files in sync can be done with the file
+// information alone and doesn't require actually reading the source. It is an
+// error to call this if the destination exists and is not a plain file.
+func RequiresCopy(src, dest *Path) (bool, error) {
+	srcInfo, err := src.FileInfo()
+	if err != nil {
+		return false, err
+	}
+	if srcInfo.FileType != TypeFile {
+		return false, nil
+	}
+	destInfo, err := dest.FileInfo()
+	// os.IsNotExist returns false for this
+	var pathError *os.PathError
+	if errors.As(err, &pathError) {
+		return true, nil
+	} else if err != nil {
+		// TEST: NOT COVERED
+		return false, err
+	} else if destInfo.FileType != TypeFile {
+		// It is the caller's responsibility to make sure we can retrieve this safely.
+		return false, fmt.Errorf("%s exists and is not a plain file", dest.Path())
+	}
+	if destInfo.FileType == TypeFile && destInfo.Size == srcInfo.Size && destInfo.ModTime.Equal(srcInfo.ModTime) {
+		return false, nil
+	}
+	return true, nil
 }
