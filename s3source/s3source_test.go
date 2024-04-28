@@ -377,10 +377,7 @@ func TestS3Source(t *testing.T) {
 	// Test reading the database from S3
 	testutil.Check(t, src.Store(j("repo-from-s3"), "repo-db"))
 	s3Path := fileinfo.NewPath(src, "repo-db")
-	r, err := s3Path.Open()
-	testutil.Check(t, err)
-	// reader is closed by database.Close()
-	dbFromS3, err := database.Open(s3Path.Path(), r)
+	dbFromS3, err := database.Open(s3Path)
 	testutil.Check(t, err)
 	defer func() { _ = dbFromS3.Close() }()
 	dbFromDisk, err := database.OpenFile(j("repo-from-s3"))

@@ -23,7 +23,7 @@ var CurGid = os.Getgid()
 type Options func(*Db)
 
 type Db struct {
-	path       string
+	path       *fileinfo.Path
 	format     DbFormat
 	f          io.ReadCloser
 	r          *bufio.Reader
@@ -47,20 +47,19 @@ const (
 var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
 
 func OpenFile(path string, options ...Options) (*Db, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	// f is closed by db.Close()
-	return Open(path, f, options...)
+	return Open(fileinfo.NewPath(fileinfo.NewLocal(""), path), options...)
 }
 
 // Open opens a database. The resulting object is a fileinfo.Provider. You must
 // call Close() on the database, which will close the `f` parameter. The
 // `pathForErrors` parameter is just used for error messages. See also OpenFile.
-func Open(pathForErrors string, f io.ReadCloser, options ...Options) (*Db, error) {
+func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
+	f, err := path.Open()
+	if err != nil {
+		return nil, err
+	}
 	db := &Db{
-		path: pathForErrors,
+		path: path,
 		f:    f,
 		r:    bufio.NewReader(f),
 	}
@@ -105,7 +104,7 @@ func (db *Db) readHeader() error {
 	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
 		db.format = DbQSync
 	} else {
-		return fmt.Errorf("%s is not a qfs database", db.path)
+		return fmt.Errorf("%s is not a qfs database", db.path.Path())
 	}
 	return nil
 }
@@ -114,7 +113,7 @@ func (db *Db) readBytes(delimiter byte) ([]byte, error) {
 	db.lastOffset = db.nextOffset
 	data, err := db.r.ReadBytes(delimiter)
 	if err != nil {
-		return data, fmt.Errorf("%s at offset %d: %w", db.path, db.lastOffset, err)
+		return data, fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
 	}
 	db.nextOffset += uint64(len(data))
 	return data[:len(data)-1], nil
@@ -124,7 +123,7 @@ func (db *Db) read(data []byte) error {
 	db.lastOffset = db.nextOffset
 	n, err := io.ReadFull(db.r, data)
 	if err != nil {
-		return fmt.Errorf("%s at offset %d: %w", db.path, db.lastOffset, err)
+		return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
 	}
 	db.nextOffset += uint64(n)
 	return nil
@@ -137,7 +136,7 @@ func (db *Db) skip(val byte) error {
 		return err
 	}
 	if skip[0] != val {
-		return fmt.Errorf("%s: expected byte %d at offset %d", db.path, val, db.lastOffset)
+		return fmt.Errorf("%s: expected byte %d at offset %d", db.path.Path(), val, db.lastOffset)
 	}
 	return nil
 }
@@ -165,14 +164,14 @@ func (db *Db) getRow() ([]byte, error) {
 	}
 	m := lenRe.FindSubmatch(start)
 	if len(m) == 0 {
-		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", db.path, db.lastOffset)
+		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", db.path.Path(), db.lastOffset)
 	}
 	length, _ := strconv.Atoi(string(m[1]))
 	same := 0
 	if m[2] != nil {
 		same, _ = strconv.Atoi(string(m[2]))
 		if len(db.lastRow) < same {
-			return nil, fmt.Errorf("%s at offset %d: `same` value is too large", db.path, db.lastOffset)
+			return nil, fmt.Errorf("%s at offset %d: `same` value is too large", db.path.Path(), db.lastOffset)
 		}
 	}
 	data := make([]byte, length+same)
@@ -212,7 +211,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 			f, err = db.handleRepo(fields)
 		}
 		if err != nil {
-			return fmt.Errorf("%s at offset %d: %w", db.path, db.lastOffset, err)
+			return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
 		}
 		db.lastFields = fields
 		if f != nil {
@@ -237,7 +236,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 			if included {
 				err = fn(f)
 				if err != nil {
-					return fmt.Errorf("%s at offset %d: %w", db.path, db.lastOffset, err)
+					return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
 				}
 			}
 		}
