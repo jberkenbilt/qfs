@@ -27,9 +27,9 @@ var metadataRe = regexp.MustCompile(`^(\d+) (?:([0-7]{4})|->(.+))$`)
 
 var ctx = context.Background()
 
-type Options func(*Repo)
+type Options func(*S3Source)
 
-type Repo struct {
+type S3Source struct {
 	s3Client *s3.Client
 	bucket   string
 	prefix   string
@@ -41,76 +41,76 @@ type Repo struct {
 	seen      map[string]struct{}
 }
 
-func New(bucket, prefix string, options ...Options) (*Repo, error) {
-	r := &Repo{
+func New(bucket, prefix string, options ...Options) (*S3Source, error) {
+	s := &S3Source{
 		bucket:   bucket,
 		prefix:   prefix,
 		modTimes: map[string]time.Time{},
 	}
 	for _, fn := range options {
-		fn(r)
+		fn(s)
 	}
-	if r.s3Client == nil {
+	if s.s3Client == nil {
 		// TEST: NOT COVERED. We don't have any automated tests that use a real S3
 		// bucket.
 		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
 			return nil, err
 		}
-		r.s3Client = s3.NewFromConfig(cfg)
+		s.s3Client = s3.NewFromConfig(cfg)
 	}
-	return r, nil
+	return s, nil
 }
 
-func (r *Repo) withLock(fn func()) {
-	r.m.Lock()
-	defer r.m.Unlock()
+func (s *S3Source) withLock(fn func()) {
+	s.m.Lock()
+	defer s.m.Unlock()
 	fn()
 }
 
-func WithS3Client(client *s3.Client) func(*Repo) {
-	return func(r *Repo) {
-		r.s3Client = client
+func WithS3Client(client *s3.Client) func(*S3Source) {
+	return func(s *S3Source) {
+		s.s3Client = client
 	}
 }
 
-func WithDatabase(db database.Memory) func(*Repo) {
-	return func(r *Repo) {
-		r.db = db
-		r.seen = map[string]struct{}{}
+func WithDatabase(db database.Memory) func(*S3Source) {
+	return func(s *S3Source) {
+		s.db = db
+		s.seen = map[string]struct{}{}
 	}
 }
 
-func (r *Repo) FullPath(path string) string {
-	return fmt.Sprintf("s3://%s/%s", r.bucket, filepath.Join(r.prefix, path))
+func (s *S3Source) FullPath(path string) string {
+	return fmt.Sprintf("s3://%s/%s", s.bucket, filepath.Join(s.prefix, path))
 }
 
-func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
-	key := filepath.Join(r.prefix, path)
+func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
+	key := filepath.Join(s.prefix, path)
 	// If we have a reference database and the s3 timestamp matches what is in the
 	// database, we can use the cached result instead of calling out to S3. Under any
 	// other conditions, we will call out to S3 and then update the database.
 	var s3Time *time.Time
 	var dbEntry *fileinfo.FileInfo
-	r.withLock(func() {
-		t, haveTime := r.modTimes[key]
+	s.withLock(func() {
+		t, haveTime := s.modTimes[key]
 		if !haveTime {
-			t, haveTime = r.modTimes[key+"/"]
+			t, haveTime = s.modTimes[key+"/"]
 		}
 		if haveTime {
 			s3Time = &t
 		}
-		if s3Time == nil || r.db == nil {
+		if s3Time == nil || s.db == nil {
 			return
 		}
-		r.seen[path] = struct{}{}
-		e, haveEntry := r.db[path]
+		s.seen[path] = struct{}{}
+		e, haveEntry := s.db[path]
 		if haveEntry {
 			if s3Time.Equal(e.S3Time) {
 				dbEntry = e
 			} else {
-				r.dbChanged = true
-				delete(r.db, path)
+				s.dbChanged = true
+				delete(s.db, path)
 			}
 		}
 	})
@@ -118,23 +118,23 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		return dbEntry, nil
 	}
 	input := &s3.HeadObjectInput{
-		Bucket: &r.bucket,
+		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	output, err := r.s3Client.HeadObject(ctx, input)
+	output, err := s.s3Client.HeadObject(ctx, input)
 	var notFound *types.NotFound
 	isDir := false
 	if errors.As(err, &notFound) {
 		isDir = true
 		input = &s3.HeadObjectInput{
-			Bucket: &r.bucket,
+			Bucket: &s.bucket,
 			Key:    aws.String(key + "/"),
 		}
-		output, err = r.s3Client.HeadObject(ctx, input)
+		output, err = s.s3Client.HeadObject(ctx, input)
 	}
 	if err != nil {
 		// TEST: NOT COVERED
-		return nil, fmt.Errorf("get information for %s: %w", r.FullPath(path), err)
+		return nil, fmt.Errorf("get information for %s: %w", s.FullPath(path), err)
 	}
 	var qfsData string
 	if output.Metadata != nil {
@@ -176,32 +176,32 @@ func (r *Repo) FileInfo(path string) (*fileinfo.FileInfo, error) {
 			fi.FileType = fileinfo.TypeFile
 		}
 	}
-	if r.db != nil {
-		r.withLock(func() {
-			r.dbChanged = true
-			r.db[path] = fi
+	if s.db != nil {
+		s.withLock(func() {
+			s.dbChanged = true
+			s.db[path] = fi
 		})
 	}
 	return fi, nil
 }
 
-func (r *Repo) DirEntries(path string) ([]fileinfo.DirEntry, error) {
-	key := filepath.Join(r.prefix, path)
+func (s *S3Source) DirEntries(path string) ([]fileinfo.DirEntry, error) {
+	key := filepath.Join(s.prefix, path)
 	if key != "" && !strings.HasSuffix(key, "/") {
 		key += "/"
 	}
 	input := &s3.ListObjectsV2Input{
-		Bucket:    &r.bucket,
+		Bucket:    &s.bucket,
 		Delimiter: aws.String("/"),
 		Prefix:    &key,
 	}
-	p := s3.NewListObjectsV2Paginator(r.s3Client, input)
+	p := s3.NewListObjectsV2Paginator(s.s3Client, input)
 	var entries []fileinfo.DirEntry
 	for p.HasMorePages() {
 		output, err := p.NextPage(ctx)
 		if err != nil {
 			// TEST: NOT COVERED
-			return nil, fmt.Errorf("list %s: %w", r.FullPath(path), err)
+			return nil, fmt.Errorf("list %s: %w", s.FullPath(path), err)
 		}
 		// qfs stores metadata on directories by creating empty keys whose paths end with
 		// /. If you have a key x/y/, when you list x/ with delimiter /, you will see
@@ -222,45 +222,45 @@ func (r *Repo) DirEntries(path string) ([]fileinfo.DirEntry, error) {
 			if !strings.HasSuffix(*x.Key, "/") {
 				entries = append(entries, fileinfo.DirEntry{Name: filepath.Base(*x.Key)})
 			}
-			r.withLock(func() {
-				r.modTimes[*x.Key] = x.LastModified.Truncate(time.Millisecond)
+			s.withLock(func() {
+				s.modTimes[*x.Key] = x.LastModified.Truncate(time.Millisecond)
 			})
 		}
 	}
 	return entries, nil
 }
 
-func (*Repo) HasStDev() bool {
+func (*S3Source) HasStDev() bool {
 	return false
 }
 
-func (*Repo) IsS3() bool {
+func (*S3Source) IsS3() bool {
 	return true
 }
 
-func (r *Repo) Open(path string) (io.ReadCloser, error) {
-	key := filepath.Join(r.prefix, path)
+func (s *S3Source) Open(path string) (io.ReadCloser, error) {
+	key := filepath.Join(s.prefix, path)
 	input := &s3.GetObjectInput{
-		Bucket: &r.bucket,
+		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	output, err := r.s3Client.GetObject(ctx, input)
+	output, err := s.s3Client.GetObject(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("get object %s: %w", r.FullPath(path), err)
+		return nil, fmt.Errorf("get object %s: %w", s.FullPath(path), err)
 	}
 	return output.Body, nil
 }
 
-func (r *Repo) Remove(path string) error {
-	key := filepath.Join(r.prefix, path)
+func (s *S3Source) Remove(path string) error {
+	key := filepath.Join(s.prefix, path)
 	input := &s3.DeleteObjectInput{
-		Bucket: &r.bucket,
+		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	_, err := r.s3Client.DeleteObject(ctx, input)
+	_, err := s.s3Client.DeleteObject(ctx, input)
 	if err != nil {
 		// TEST: NOT COVERED. DeleteObject is idempotent.
-		return fmt.Errorf("delete object %s: %w", r.FullPath(path), err)
+		return fmt.Errorf("delete object %s: %w", s.FullPath(path), err)
 	}
 	return nil
 }
@@ -268,7 +268,7 @@ func (r *Repo) Remove(path string) error {
 // Store copies the local file at `path` into the repository with the appropriate
 // metadata. `path` is relative to top of the file collection in both the local
 // and repository contexts.
-func (r *Repo) Store(localPath string, repoPath string) error {
+func (s *S3Source) Store(localPath string, repoPath string) error {
 	p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
 	info, err := p.FileInfo()
 	if err != nil {
@@ -277,7 +277,7 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 	if repoPath == "." {
 		repoPath = ""
 	}
-	key := filepath.Join(r.prefix, repoPath)
+	key := filepath.Join(s.prefix, repoPath)
 	var qfsData string
 	var body io.Reader
 	switch info.FileType {
@@ -304,9 +304,9 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 	if body == nil {
 		body = &bytes.Buffer{}
 	}
-	uploader := manager.NewUploader(r.s3Client)
+	uploader := manager.NewUploader(s.s3Client)
 	input := &s3.PutObjectInput{
-		Bucket:   &r.bucket,
+		Bucket:   &s.bucket,
 		Key:      &key,
 		Body:     body,
 		Metadata: metadata,
@@ -314,22 +314,22 @@ func (r *Repo) Store(localPath string, repoPath string) error {
 	_, err = uploader.Upload(ctx, input)
 	if err != nil {
 		// TEST: NOT COVERED
-		return fmt.Errorf("upload %s: %w", r.FullPath(repoPath), err)
+		return fmt.Errorf("upload %s: %w", s.FullPath(repoPath), err)
 	}
 	return nil
 }
 
-func (r *Repo) DbChanged() bool {
-	return r.dbChanged
+func (s *S3Source) DbChanged() bool {
+	return s.dbChanged
 }
 
-func (r *Repo) Finish() {
+func (s *S3Source) Finish() {
 	// This is single-threaded, so we don't need the lock. Remove anything from the
 	// database that we didn't see during traversal.
-	if r.db != nil {
-		for k := range r.db {
-			if _, ok := r.seen[k]; !ok {
-				delete(r.db, k)
+	if s.db != nil {
+		for k := range s.db {
+			if _, ok := s.seen[k]; !ok {
+				delete(s.db, k)
 			}
 		}
 	}

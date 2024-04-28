@@ -132,7 +132,7 @@ func setUpTestBucket() {
 	}
 }
 
-func TestRepo(t *testing.T) {
+func TestS3Source(t *testing.T) {
 	setUpTestBucket()
 	tmp := t.TempDir()
 	j := func(path string) string { return filepath.Join(tmp, path) }
@@ -140,7 +140,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	r, err := s3source.New(
+	src, err := s3source.New(
 		TestBucket,
 		"home",
 		s3source.WithS3Client(s3Client),
@@ -148,7 +148,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	entries, err := r.DirEntries("")
+	entries, err := src.DirEntries("")
 	if err != nil {
 		t.Errorf(err.Error())
 	}
@@ -165,18 +165,18 @@ func TestRepo(t *testing.T) {
 		"file2",
 		"file3",
 	} {
-		err = r.Store(j("files/"+f), f)
+		err = src.Store(j("files/"+f), f)
 		if err != nil {
 			t.Fatalf("store: %v", err)
 		}
 	}
 
 	// Store errors
-	err = r.Store("/nope", "nope")
+	err = src.Store("/nope", "nope")
 	if err == nil || !strings.Contains(err.Error(), "/nope") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = r.Store("/dev/null", "nope")
+	err = src.Store("/dev/null", "nope")
 	if err == nil || !strings.Contains(err.Error(), "can only store files") {
 		t.Errorf("wrong error: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestRepo(t *testing.T) {
 		t.Errorf("wrong size: %v", *headOutput.ContentLength)
 	}
 
-	tr, err := traverse.New("", traverse.WithSource(r))
+	tr, err := traverse.New("", traverse.WithSource(src))
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -237,7 +237,7 @@ func TestRepo(t *testing.T) {
 	}
 
 	// Traverse again with the reference database. We should get 100% cache hits.
-	r, err = s3source.New(
+	src, err = s3source.New(
 		TestBucket,
 		"home",
 		s3source.WithS3Client(s3Client),
@@ -246,7 +246,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	tr, err = traverse.New("", traverse.WithSource(r))
+	tr, err = traverse.New("", traverse.WithSource(src))
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -261,7 +261,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	if r.DbChanged() {
+	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
 	mem2 := database.Memory{}
@@ -276,7 +276,7 @@ func TestRepo(t *testing.T) {
 	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
 	delete(mem2, "file1")
 	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
-	r, err = s3source.New(
+	src, err = s3source.New(
 		TestBucket,
 		"home",
 		s3source.WithS3Client(s3Client),
@@ -285,7 +285,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	tr, err = traverse.New("", traverse.WithSource(r))
+	tr, err = traverse.New("", traverse.WithSource(src))
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -300,7 +300,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	if !r.DbChanged() {
+	if !src.DbChanged() {
 		t.Errorf("db didn't change")
 	}
 	mem3 := database.Memory{}
@@ -324,10 +324,10 @@ func TestRepo(t *testing.T) {
 
 	// Change S3 to exercise remaining S3 functions and recheck database
 	delete(mem2, "file1")
-	testutil.Check(t, r.Remove("file1"))
+	testutil.Check(t, src.Remove("file1"))
 	// Remove is idempotent, so no error to do it again.
-	testutil.Check(t, r.Remove("file1"))
-	r, err = s3source.New(
+	testutil.Check(t, src.Remove("file1"))
+	src, err = s3source.New(
 		TestBucket,
 		"home",
 		s3source.WithS3Client(s3Client),
@@ -336,7 +336,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	tr, err = traverse.New("", traverse.WithSource(r))
+	tr, err = traverse.New("", traverse.WithSource(src))
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -351,15 +351,15 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	if r.DbChanged() {
+	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
 
-	_, err = r.Open("nope")
+	_, err = src.Open("nope")
 	if err == nil || !strings.Contains(err.Error(), "get object s3://qfs-test-repo/home/nope:") {
 		t.Errorf("wrong error: %v", err)
 	}
-	rd, err := r.Open("dir1/potato")
+	rd, err := src.Open("dir1/potato")
 	testutil.Check(t, err)
 	defer func() { _ = rd.Close() }()
 	var buf bytes.Buffer
