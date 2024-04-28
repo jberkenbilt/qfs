@@ -96,6 +96,9 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		t, haveTime := s.modTimes[key]
 		if !haveTime {
 			t, haveTime = s.modTimes[key+"/"]
+			if haveTime {
+				key += "/"
+			}
 		}
 		if haveTime {
 			s3Time = &t
@@ -123,14 +126,15 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	}
 	output, err := s.s3Client.HeadObject(ctx, input)
 	var notFound *types.NotFound
-	isDir := false
 	if errors.As(err, &notFound) {
-		isDir = true
 		input = &s3.HeadObjectInput{
 			Bucket: &s.bucket,
 			Key:    aws.String(key + "/"),
 		}
 		output, err = s.s3Client.HeadObject(ctx, input)
+		if err == nil {
+			key += "/"
+		}
 	}
 	if err != nil {
 		// TEST: NOT COVERED
@@ -140,6 +144,24 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	if output.Metadata != nil {
 		qfsData = output.Metadata[MetadataKey]
 	}
+	// HeadObject returns time with a lower granularity than ListObjectsV2.
+	if s3Time == nil {
+		listInput := &s3.ListObjectsV2Input{
+			Bucket:  &s.bucket,
+			Prefix:  &key,
+			MaxKeys: aws.Int32(1),
+		}
+		listOutput, err := s.s3Client.ListObjectsV2(ctx, listInput)
+		if err != nil {
+			// TEST: NOT COVERED
+			return nil, fmt.Errorf("get listing for %s: %w", s.FullPath(path), err)
+		}
+		if len(listOutput.Contents) == 0 || *(listOutput.Contents[0].Key) != key {
+			// TEST: NOT COVERED
+			return nil, fmt.Errorf("no listing available for %s", s.FullPath(path))
+		}
+		s3Time = listOutput.Contents[0].LastModified
+	}
 	fi := &fileinfo.FileInfo{
 		Path:        path,
 		FileType:    fileinfo.TypeUnknown,
@@ -148,12 +170,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		Permissions: 0777,
 		Uid:         database.CurUid,
 		Gid:         database.CurGid,
-		S3Time:      output.LastModified.Truncate(time.Millisecond),
-	}
-	// HeadObject returns time with a lower granularity, so use the one we got from
-	// ListObjectsV2 if possible.
-	if s3Time != nil {
-		fi.S3Time = *s3Time
+		S3Time:      *s3Time,
 	}
 	if qfsData != "" {
 		if m := metadataRe.FindStringSubmatch(qfsData); m != nil {
@@ -170,7 +187,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		}
 	}
 	if fi.FileType == fileinfo.TypeUnknown {
-		if isDir {
+		if strings.HasSuffix(key, "/") {
 			fi.FileType = fileinfo.TypeDirectory
 		} else {
 			fi.FileType = fileinfo.TypeFile

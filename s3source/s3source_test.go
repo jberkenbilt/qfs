@@ -75,13 +75,9 @@ func TestStartMinio(t *testing.T) {
 	// This is mainly for coverage. The test container is started by setup/tear-down.
 	// This exercises that it is already started.
 	s, err := s3test.New(TestContainer)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	started, err := s.Start()
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	if started {
 		t.Errorf("test container should already be running")
 	}
@@ -139,17 +135,13 @@ func TestS3Source(t *testing.T) {
 	tmp := t.TempDir()
 	j := func(path string) string { return filepath.Join(tmp, path) }
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	src, err := s3source.New(
 		TestBucket,
 		"home",
 		s3source.WithS3Client(s3Client),
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	entries, err := src.DirEntries("")
 	if err != nil {
 		t.Errorf(err.Error())
@@ -190,9 +182,7 @@ func TestS3Source(t *testing.T) {
 		Key:    aws.String("home/file1"),
 	}
 	headOutput, err := s3Client.HeadObject(ctx, headInput)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	if !reflect.DeepEqual(headOutput.Metadata, map[string]string{s3source.MetadataKey: "1714235352000 0644"}) {
 		t.Errorf("wrong metadata %#v", headOutput.Metadata)
 	}
@@ -201,9 +191,7 @@ func TestS3Source(t *testing.T) {
 	}
 
 	tr, err := traverse.New("", traverse.WithSource(src))
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	files, err := tr.Traverse(
 		func(s string) {
 			t.Errorf("notify: %v", s)
@@ -212,9 +200,7 @@ func TestS3Source(t *testing.T) {
 			t.Errorf("error: %v", err)
 		},
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	mem1 := database.Memory{}
 	testutil.Check(t, mem1.Load(files))
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem1, database.DbQfs))
@@ -245,13 +231,9 @@ func TestS3Source(t *testing.T) {
 		s3source.WithS3Client(s3Client),
 		s3source.WithDatabase(mem1),
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	tr, err = traverse.New("", traverse.WithSource(src))
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	files, err = tr.Traverse(
 		func(s string) {
 			t.Errorf("notify: %v", s)
@@ -260,9 +242,7 @@ func TestS3Source(t *testing.T) {
 			t.Errorf("error: %v", err)
 		},
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
@@ -284,13 +264,9 @@ func TestS3Source(t *testing.T) {
 		s3source.WithS3Client(s3Client),
 		s3source.WithDatabase(mem2),
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	tr, err = traverse.New("", traverse.WithSource(src))
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	files, err = tr.Traverse(
 		func(s string) {
 			t.Errorf("notify: %v", s)
@@ -299,9 +275,7 @@ func TestS3Source(t *testing.T) {
 			t.Errorf("error: %v", err)
 		},
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	if !src.DbChanged() {
 		t.Errorf("db didn't change")
 	}
@@ -335,13 +309,9 @@ func TestS3Source(t *testing.T) {
 		s3source.WithS3Client(s3Client),
 		s3source.WithDatabase(mem2),
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	tr, err = traverse.New("", traverse.WithSource(src))
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	_, err = tr.Traverse(
 		func(s string) {
 			t.Errorf("notify: %v", s)
@@ -350,9 +320,7 @@ func TestS3Source(t *testing.T) {
 			t.Errorf("error: %v", err)
 		},
 	)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	testutil.Check(t, err)
 	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
@@ -370,5 +338,27 @@ func TestS3Source(t *testing.T) {
 	_ = rd.Close()
 	if s := buf.String(); s != "salad\n" {
 		t.Errorf("got wrong body: %s", s)
+	}
+
+	// Test FileInfo prior to traversal. This is needed to check the repo database before downloading.
+	file1, err := fileinfo.NewPath(src, "dir1/potato").FileInfo()
+	testutil.Check(t, err)
+	dir1, err := fileinfo.NewPath(src, "dir1").FileInfo()
+	testutil.Check(t, err)
+	src, err = s3source.New(
+		TestBucket,
+		"home",
+		s3source.WithS3Client(s3Client),
+	)
+	testutil.Check(t, err)
+	file2, err := fileinfo.NewPath(src, "dir1/potato").FileInfo()
+	testutil.Check(t, err)
+	dir2, err := fileinfo.NewPath(src, "dir1").FileInfo()
+	testutil.Check(t, err)
+	if !file1.S3Time.Equal(file2.S3Time) || !file1.ModTime.Equal(file2.ModTime) {
+		t.Errorf("file metadata is inconsistent")
+	}
+	if !dir1.S3Time.Equal(dir2.S3Time) || !dir1.ModTime.Equal(dir2.ModTime) {
+		t.Errorf("dir metadata is inconsistent")
 	}
 }
