@@ -373,4 +373,24 @@ func TestS3Source(t *testing.T) {
 	} else if x {
 		t.Errorf("initially requires copy")
 	}
+
+	// Test reading the database from S3
+	testutil.Check(t, src.Store(j("repo-from-s3"), "repo-db"))
+	s3Path := fileinfo.NewPath(src, "repo-db")
+	r, err := s3Path.Open()
+	testutil.Check(t, err)
+	// reader is closed by database.Close()
+	dbFromS3, err := database.Open(s3Path.Path(), r)
+	testutil.Check(t, err)
+	defer func() { _ = dbFromS3.Close() }()
+	dbFromDisk, err := database.OpenFile(j("repo-from-s3"))
+	testutil.Check(t, err)
+	defer func() { _ = dbFromDisk.Close() }()
+	mem1 = database.Memory{}
+	mem2 = database.Memory{}
+	testutil.Check(t, mem1.Load(dbFromS3))
+	testutil.Check(t, mem2.Load(dbFromDisk))
+	if !reflect.DeepEqual(mem1, mem2) {
+		t.Errorf("inconsistent results")
+	}
 }
