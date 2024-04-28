@@ -136,12 +136,18 @@ func TestS3Source(t *testing.T) {
 	j := func(path string) string { return filepath.Join(tmp, path) }
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	testutil.Check(t, err)
-	src, err := s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-	)
-	testutil.Check(t, err)
+	makeSrc := func(db database.Memory) *s3source.S3Source {
+		t.Helper()
+		src, err := s3source.New(
+			TestBucket,
+			"home",
+			s3source.WithS3Client(s3Client),
+			s3source.WithDatabase(db),
+		)
+		testutil.Check(t, err)
+		return src
+	}
+	src := makeSrc(nil)
 	entries, err := src.DirEntries("")
 	if err != nil {
 		t.Errorf(err.Error())
@@ -190,17 +196,23 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong size: %v", *headOutput.ContentLength)
 	}
 
-	tr, err := traverse.New("", traverse.WithSource(src))
-	testutil.Check(t, err)
-	files, err := tr.Traverse(
-		func(s string) {
-			t.Errorf("notify: %v", s)
-		},
-		func(err error) {
-			t.Errorf("error: %v", err)
-		},
-	)
-	testutil.Check(t, err)
+	doTraverse := func(src fileinfo.Source) fileinfo.Provider {
+		t.Helper()
+		tr, err := traverse.New("", traverse.WithSource(src))
+		testutil.Check(t, err)
+		files, err := tr.Traverse(
+			func(s string) {
+				t.Errorf("notify: %v", s)
+			},
+			func(err error) {
+				t.Errorf("error: %v", err)
+			},
+		)
+		testutil.Check(t, err)
+		return files
+	}
+
+	files := doTraverse(src)
 	mem1 := database.Memory{}
 	testutil.Check(t, mem1.Load(files))
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem1, database.DbQfs))
@@ -225,27 +237,8 @@ func TestS3Source(t *testing.T) {
 	}
 
 	// Traverse again with the reference database. We should get 100% cache hits.
-	src, err = s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-		s3source.WithDatabase(mem1),
-	)
-	testutil.Check(t, err)
-	tr, err = traverse.New("", traverse.WithSource(src))
-	testutil.Check(t, err)
-	files, err = tr.Traverse(
-		func(s string) {
-			t.Errorf("notify: %v", s)
-		},
-		func(err error) {
-			t.Errorf("error: %v", err)
-		},
-	)
-	testutil.Check(t, err)
-	if src.DbChanged() {
-		t.Errorf("db changed")
-	}
+	src = makeSrc(mem1)
+	files = doTraverse(src)
 	mem2 := database.Memory{}
 	_ = mem2.Load(files)
 	if !reflect.DeepEqual(mem1, mem2) {
@@ -258,24 +251,8 @@ func TestS3Source(t *testing.T) {
 	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
 	delete(mem2, "file1")
 	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
-	src, err = s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-		s3source.WithDatabase(mem2),
-	)
-	testutil.Check(t, err)
-	tr, err = traverse.New("", traverse.WithSource(src))
-	testutil.Check(t, err)
-	files, err = tr.Traverse(
-		func(s string) {
-			t.Errorf("notify: %v", s)
-		},
-		func(err error) {
-			t.Errorf("error: %v", err)
-		},
-	)
-	testutil.Check(t, err)
+	src = makeSrc(mem2)
+	files = doTraverse(src)
 	if !src.DbChanged() {
 		t.Errorf("db didn't change")
 	}
@@ -303,24 +280,8 @@ func TestS3Source(t *testing.T) {
 	testutil.Check(t, src.Remove("file1"))
 	// Remove is idempotent, so no error to do it again.
 	testutil.Check(t, src.Remove("file1"))
-	src, err = s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-		s3source.WithDatabase(mem2),
-	)
-	testutil.Check(t, err)
-	tr, err = traverse.New("", traverse.WithSource(src))
-	testutil.Check(t, err)
-	_, err = tr.Traverse(
-		func(s string) {
-			t.Errorf("notify: %v", s)
-		},
-		func(err error) {
-			t.Errorf("error: %v", err)
-		},
-	)
-	testutil.Check(t, err)
+	src = makeSrc(mem2)
+	_ = doTraverse(src)
 	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
@@ -345,12 +306,7 @@ func TestS3Source(t *testing.T) {
 	testutil.Check(t, err)
 	dir1, err := fileinfo.NewPath(src, "dir1").FileInfo()
 	testutil.Check(t, err)
-	src, err = s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-	)
-	testutil.Check(t, err)
+	src = makeSrc(nil)
 	file2, err := fileinfo.NewPath(src, "dir1/potato").FileInfo()
 	testutil.Check(t, err)
 	dir2, err := fileinfo.NewPath(src, "dir1").FileInfo()
