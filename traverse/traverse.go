@@ -66,7 +66,7 @@ func (tr *Traverser) getNode(node *treeNode) error {
 		// we traverse the children. Create a place-holder that we will fill in if we
 		// can.
 		node.info = &fileinfo.FileInfo{
-			Path:        path.Path(),
+			Path:        node.path,
 			FileType:    fileinfo.TypeDirectory,
 			ModTime:     time.Now(),
 			Permissions: 0755,
@@ -111,14 +111,17 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			if err != nil {
 				return fmt.Errorf("read dir %s: %w", path.Path(), err)
 			}
+
 			if node.s3Dir {
 				// Now that we've read the directory entries, we should be able to get a cache it
 				// on the info call. An error here would mean that the directory marker itself
-				// was missing. In that case, we'll just stick with the place-holder, which is
-				// better than potentially skipping all the descendents.
+				// was missing. In that case, we'll consider the directory to be not included.
+				// This is better than skipping the descendents.
 				info, err := path.FileInfo()
 				if err == nil {
 					node.info = info
+				} else {
+					node.included = false
 				}
 			}
 			sort.Slice(entries, func(i, j int) bool {

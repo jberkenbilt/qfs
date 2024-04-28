@@ -317,4 +317,26 @@ func TestS3Source(t *testing.T) {
 	if !dir1.S3Time.Equal(dir2.S3Time) || !dir1.ModTime.Equal(dir2.ModTime) {
 		t.Errorf("dir metadata is inconsistent")
 	}
+
+	// Remove a directory node. Traverse should handle this.
+	src = makeSrc(mem1)
+	if _, ok := mem1["dir1"]; !ok {
+		t.Errorf("wrong precondition")
+	}
+	testutil.Check(t, src.Remove("dir1/"))
+	files = doTraverse(src)
+	if _, ok := mem1["dir1"]; ok {
+		t.Errorf("stil there")
+	}
+	if _, ok := mem1["dir1/potato"]; !ok {
+		t.Errorf("descendents are missing")
+	}
+	mem2 = database.Memory{}
+	_ = mem2.Load(files)
+	if !reflect.DeepEqual(mem1, mem2) {
+		t.Errorf("unexpected results")
+		_ = fileinfo.PrintDb(files, true)
+		fmt.Println("---")
+		_ = fileinfo.PrintDb(mem1, true)
+	}
 }

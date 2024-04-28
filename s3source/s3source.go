@@ -137,7 +137,6 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 		}
 	}
 	if err != nil {
-		// TEST: NOT COVERED
 		return nil, fmt.Errorf("get information for %s: %w", s.FullPath(path), err)
 	}
 	var qfsData string
@@ -269,7 +268,11 @@ func (s *S3Source) Open(path string) (io.ReadCloser, error) {
 }
 
 func (s *S3Source) Remove(path string) error {
+	isDir := strings.HasSuffix(path, "/")
 	key := filepath.Join(s.prefix, path)
+	if isDir {
+		key += "/"
+	}
 	input := &s3.DeleteObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
