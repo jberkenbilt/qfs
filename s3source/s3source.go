@@ -1,4 +1,4 @@
-package repo
+package s3source
 
 import (
 	"bytes"

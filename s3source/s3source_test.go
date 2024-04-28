@@ -1,4 +1,4 @@
-package repo_test
+package s3source_test
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/gztar"
 	"github.com/jberkenbilt/qfs/qfs"
-	"github.com/jberkenbilt/qfs/repo"
+	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
 	"github.com/jberkenbilt/qfs/traverse"
@@ -140,10 +140,10 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	r, err := repo.New(
+	r, err := s3source.New(
 		TestBucket,
 		"home",
-		repo.WithS3Client(s3Client),
+		s3source.WithS3Client(s3Client),
 	)
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -191,7 +191,7 @@ func TestRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	if !reflect.DeepEqual(headOutput.Metadata, map[string]string{repo.MetadataKey: "1714235352000 0644"}) {
+	if !reflect.DeepEqual(headOutput.Metadata, map[string]string{s3source.MetadataKey: "1714235352000 0644"}) {
 		t.Errorf("wrong metadata %#v", headOutput.Metadata)
 	}
 	if *headOutput.ContentLength != 16 {
@@ -237,11 +237,11 @@ func TestRepo(t *testing.T) {
 	}
 
 	// Traverse again with the reference database. We should get 100% cache hits.
-	r, err = repo.New(
+	r, err = s3source.New(
 		TestBucket,
 		"home",
-		repo.WithS3Client(s3Client),
-		repo.WithDatabase(mem1),
+		s3source.WithS3Client(s3Client),
+		s3source.WithDatabase(mem1),
 	)
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -276,11 +276,11 @@ func TestRepo(t *testing.T) {
 	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
 	delete(mem2, "file1")
 	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
-	r, err = repo.New(
+	r, err = s3source.New(
 		TestBucket,
 		"home",
-		repo.WithS3Client(s3Client),
-		repo.WithDatabase(mem2),
+		s3source.WithS3Client(s3Client),
+		s3source.WithDatabase(mem2),
 	)
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -327,11 +327,11 @@ func TestRepo(t *testing.T) {
 	testutil.Check(t, r.Remove("file1"))
 	// Remove is idempotent, so no error to do it again.
 	testutil.Check(t, r.Remove("file1"))
-	r, err = repo.New(
+	r, err = s3source.New(
 		TestBucket,
 		"home",
-		repo.WithS3Client(s3Client),
-		repo.WithDatabase(mem2),
+		s3source.WithS3Client(s3Client),
+		s3source.WithDatabase(mem2),
 	)
 	if err != nil {
 		t.Fatalf(err.Error())
