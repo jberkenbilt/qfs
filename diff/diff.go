@@ -25,7 +25,6 @@ type Diff struct {
 	noSpecial    bool
 	noDirTimes   bool
 	noOwnerships bool
-	checks       bool
 }
 
 type Result struct {
@@ -69,12 +68,6 @@ func WithFilesOnly(filesOnly bool) func(*Diff) {
 func WithNoOwnerships(noOwnerships bool) func(*Diff) {
 	return func(d *Diff) {
 		d.noOwnerships = noOwnerships
-	}
-}
-
-func WithChecks(checks bool) func(*Diff) {
-	return func(d *Diff) {
-		d.checks = checks
 	}
 }
 
@@ -156,9 +149,6 @@ func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
 	sort.Strings(paths)
 	for _, path := range paths {
 		d.compare(r, path, work[path])
-	}
-	if !d.checks {
-		r.Check = nil
 	}
 	return nil
 }
@@ -254,11 +244,13 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 	}
 }
 
-func (r *Result) WriteDiff(f *os.File) error {
-	for _, m := range r.Check {
-		if _, err := fmt.Fprintf(f, "check %s\n", m); err != nil {
-			// TEST: NOT COVERED
-			return err
+func (r *Result) WriteDiff(f *os.File, withChecks bool) error {
+	if withChecks {
+		for _, m := range r.Check {
+			if _, err := fmt.Fprintf(f, "check %s\n", m); err != nil {
+				// TEST: NOT COVERED
+				return err
+			}
 		}
 	}
 	for _, m := range r.TypeChange {

@@ -331,7 +331,6 @@ func (p *parser) doDiff() error {
 		diff.WithNoSpecial(p.noSpecial),
 		diff.WithNoDirTimes(p.noDirTimes),
 		diff.WithNoOwnerships(p.noOwnerships),
-		diff.WithChecks(p.checks),
 	)
 	if err != nil {
 		// TEST: NOT COVERED. diff.New never returns an error.
@@ -341,7 +340,7 @@ func (p *parser) doDiff() error {
 	if err != nil {
 		return fmt.Errorf("diff: %w", err)
 	}
-	err = r.WriteDiff(os.Stdout)
+	err = r.WriteDiff(os.Stdout, p.checks)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
