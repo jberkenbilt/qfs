@@ -1,7 +1,9 @@
 # QFS
 
+Last full review: 2024-04-17
+
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
-the local file system. The state includes the output of _stat_ on the directory and all its
+the local file system. The state includes the output of _lstat_ on the directory and all its
 contents. `qfs` includes the following capabilities:
 * Generation of qfs _databases_ (which are efficient flat files), possibly with the application of
   filters
@@ -11,7 +13,8 @@ contents. `qfs` includes the following capabilities:
 * The concept of a repository and sites, implemented as a location in Amazon S3 (or an
   API-compatible storage location) that serves as a backup and allows synchronization
 * Synchronization: the ability to _push_ local changes to a repository and to _pull_ changes from
-  the repository with the local file system with conflict detection
+  the repository with the local file system with conflict detection, along with the ability to
+  create local backups or helper files for moving directly to a different site
 
 Do you need `qfs`?
 * If you are a Windows user and you're just trying to keep documents in sync, use One Drive.
@@ -23,6 +26,9 @@ Do you need `qfs`?
   cache, temporary files, or any number of other things that get dumped into your home directory)
   and you are trying to keep those core files in sync seamlessly across multiple computers, `qfs` is
   for you. It is a niche tool for a narrow audience.
+* If you are a system administrator who wants to do something and see what changed, `qfs` may be a
+  great power tool, though you could achieve the same effect with less elegance and efficiency using
+  `find` and other standard shell tools.
 
 You can think of `qfs` repositories as like a cross between `git` and `Dropbox`. Suppose you have a
 core collection of files in your home directory, such as "dot files" (shell init files), task lists,
@@ -89,8 +95,6 @@ qfs subcommand [options]
 
 ## qfs Subcommands
 
-XXX HERE
-
 * `scan` -- scan and filter file system or database (replaces `qsfiles` and `qsprint`)
   * Positional: directory or qfs database file
   * _filter options_
@@ -130,7 +134,7 @@ XXX HERE
 
 # Filters
 
-qfs will use the qsync filter format with the addition of
+qfs uses the qsync filter format with the addition of
 
 ```
 :junk:(junk-regexp)
