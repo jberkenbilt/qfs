@@ -8,6 +8,7 @@ import (
 	"golang.org/x/exp/maps"
 	"os"
 	"sort"
+	"strconv"
 )
 
 type Options func(*Diff)
@@ -25,8 +26,22 @@ type Diff struct {
 	noOwnerships bool
 }
 
+type Check struct {
+	path    string
+	modTime []int64
+}
+
+func (c *Check) String() string {
+	s := "check"
+	for _, m := range c.modTime {
+		s += " " + strconv.Itoa(int(m))
+	}
+	s += " - " + c.path
+	return s
+}
+
 type Result struct {
-	Check      []string // mtime [ ... ] - path
+	Check      []*Check
 	TypeChange []string // path
 	Rm         []string // path
 	Add        []*fileinfo.FileInfo
@@ -149,42 +164,39 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 		// the right modification time.
 		f := data.fOld
 		if f.FileType == fileinfo.TypeFile {
-			r.Check = append(r.Check, fmt.Sprintf("%d - %s", f.ModTime.UnixMilli(), f.Path))
+			r.Check = append(r.Check, &Check{
+				path:    f.Path,
+				modTime: []int64{f.ModTime.UnixMilli()},
+			})
 		}
 		r.Rm = append(r.Rm, f.Path)
 	} else if data.fOld == nil {
 		// The file is new. Allow it to already exist with the correct modification time.
 		f := data.fNew
-		r.Check = append(r.Check, fmt.Sprintf("%d - %s", f.ModTime.UnixMilli(), f.Path))
+		r.Check = append(r.Check, &Check{
+			path:    f.Path,
+			modTime: []int64{f.ModTime.UnixMilli()},
+		})
 		r.Add = append(r.Add, f)
 	} else {
 		// The file has changed. Add data for conflict detection when the old file is a
 		// regular file.
 		if data.fOld.FileType == fileinfo.TypeFile {
 			if data.fNew.ModTime != data.fOld.ModTime || data.fNew.FileType != fileinfo.TypeFile {
-				// The file will be replaced or overwritten.
-				var check string
+				// The file will be replaced or overwritten. Allow the file to have the old modification time.
+				check := &Check{
+					path: path,
+					modTime: []int64{
+						data.fOld.ModTime.UnixMilli(),
+					},
+				}
 				if data.fNew.FileType == fileinfo.TypeFile {
 					// The file is being overwritten. Allow the file to have either the old
 					// modification, indicating that the file was not touched on the other side, or
 					// the new modification time, indicating that it has already been updated.
-					check = fmt.Sprintf(
-						"%d %d - %s",
-						data.fOld.ModTime.UnixMilli(),
-						data.fNew.ModTime.UnixMilli(),
-						path,
-					)
-				} else {
-					// The file is being replaced. Allow the file to have the old modification time.
-					check = fmt.Sprintf(
-						"%d - %s",
-						data.fOld.ModTime.UnixMilli(),
-						path,
-					)
+					check.modTime = append(check.modTime, data.fNew.ModTime.UnixMilli())
 				}
-				if check != "" {
-					r.Check = append(r.Check, check)
-				}
+				r.Check = append(r.Check, check)
 			}
 		}
 		if data.fOld.FileType != data.fNew.FileType {
@@ -237,7 +249,7 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 func (r *Result) WriteDiff(f *os.File, withChecks bool) error {
 	if withChecks {
 		for _, m := range r.Check {
-			if _, err := fmt.Fprintf(f, "check %s\n", m); err != nil {
+			if _, err := fmt.Fprintln(f, m.String()); err != nil {
 				// TEST: NOT COVERED
 				return err
 			}
