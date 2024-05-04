@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -53,13 +52,7 @@ func New(bucket, prefix string, options ...Options) (*S3Source, error) {
 		fn(s)
 	}
 	if s.s3Client == nil {
-		// TEST: NOT COVERED. We don't have any automated tests that use a real S3
-		// bucket.
-		cfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			return nil, err
-		}
-		s.s3Client = s3.NewFromConfig(cfg)
+		return nil, fmt.Errorf("an s3 client must be given when creating an S3Source")
 	}
 	return s, nil
 }

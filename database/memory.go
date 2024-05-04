@@ -24,8 +24,9 @@ func (m Memory) Close() error {
 	return nil
 }
 
-func (m Memory) Load(p fileinfo.Provider) error {
-	return p.ForEach(func(info *fileinfo.FileInfo) error {
+func Load(p fileinfo.Provider) (Memory, error) {
+	m := Memory{}
+	return m, p.ForEach(func(info *fileinfo.FileInfo) error {
 		m[info.Path] = info
 		return nil
 	})

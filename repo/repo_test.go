@@ -1,4 +1,4 @@
-package s3source_test
+package repo_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/gztar"
 	"github.com/jberkenbilt/qfs/qfs"
+	"github.com/jberkenbilt/qfs/repo"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
@@ -213,8 +214,8 @@ func TestS3Source(t *testing.T) {
 	}
 
 	files := doTraverse(src)
-	mem1 := database.Memory{}
-	testutil.Check(t, mem1.Load(files))
+	mem1, err := database.Load(files)
+	testutil.Check(t, err)
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem1, database.DbQfs))
 	testutil.Check(t, database.WriteDb(j("repo-from-s3"), mem1, database.DbRepo))
 	stdout, stderr := testutil.WithStdout(func() {
@@ -239,8 +240,7 @@ func TestS3Source(t *testing.T) {
 	// Traverse again with the reference database. We should get 100% cache hits.
 	src = makeSrc(mem1)
 	files = doTraverse(src)
-	mem2 := database.Memory{}
-	_ = mem2.Load(files)
+	mem2, _ := database.Load(files)
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("databases are inconsistent")
 		_ = fileinfo.PrintDb(mem1, true)
@@ -256,8 +256,7 @@ func TestS3Source(t *testing.T) {
 	if !src.DbChanged() {
 		t.Errorf("db didn't change")
 	}
-	mem3 := database.Memory{}
-	_ = mem3.Load(files)
+	mem3, _ := database.Load(files)
 	o1, _ := testutil.WithStdout(func() {
 		_ = fileinfo.PrintDb(mem1, true)
 	})
@@ -331,8 +330,7 @@ func TestS3Source(t *testing.T) {
 	if _, ok := mem1["dir1/potato"]; !ok {
 		t.Errorf("descendents are missing")
 	}
-	mem2 = database.Memory{}
-	_ = mem2.Load(files)
+	mem2, _ = database.Load(files)
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("unexpected results")
 		_ = fileinfo.PrintDb(files, true)
@@ -383,11 +381,37 @@ func TestS3Source(t *testing.T) {
 	dbFromDisk, err := database.OpenFile(j("repo-from-s3"))
 	testutil.Check(t, err)
 	defer func() { _ = dbFromDisk.Close() }()
-	mem1 = database.Memory{}
-	mem2 = database.Memory{}
-	testutil.Check(t, mem1.Load(dbFromS3))
-	testutil.Check(t, mem2.Load(dbFromDisk))
+	mem1, err = database.Load(dbFromS3)
+	testutil.Check(t, err)
+	mem2, err = database.Load(dbFromDisk)
+	testutil.Check(t, err)
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("inconsistent results")
+	}
+}
+
+func TestNoClient(t *testing.T) {
+	_, err := s3source.New("x", "y")
+	if err == nil || !strings.Contains(err.Error(), "an s3 client") {
+		t.Errorf("wrong error: %v", err)
+	}
+}
+
+func TestRepo_IsInitialized(t *testing.T) {
+	_, err := repo.New(
+		repo.WithS3Client(s3Client),
+	)
+	if err == nil || !strings.Contains(err.Error(), ".qfs/repo/config") {
+		t.Errorf("wrong error: %v", err.Error())
+	}
+	r, err := repo.New(
+		repo.WithLocalTop("testdata/files1"),
+		repo.WithS3Client(s3Client),
+	)
+	testutil.Check(t, err)
+	v, err := r.IsInitialized()
+	testutil.Check(t, err)
+	if v {
+		t.Errorf("xxx: %v", err)
 	}
 }

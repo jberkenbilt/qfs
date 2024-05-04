@@ -289,9 +289,7 @@ changes to a central repository with conflict detection.
 
 A file collection is defined by containing `.qfs` directory, which has the following layout:
 * `repo/`
-  * `config` -- s3 bucket and prefix with other optional information (e.g. endpoint, region, AWS
-    profile). This file is not copied to the repository and may differ from site to site (e.g.
-    because of different AWS profiles)
+  * `config` -- contains s3://bucket/prefix. This file is not copied to the repository.
   * `db` -- the repository's database
 * `filters/`
   * `repo` -- a global filter that defines the file collection as a subset of the file collection
@@ -327,6 +325,7 @@ multiple simultaneous updaters.
 The repository contains a key for each file in the collection including the contents of the `.qfs`
 directory with the following specifics:
 * `.qfs/site` is never copied to a repository since this differs across sites
+* `.qfs/config` is not copied to the repository
 * `.qfs/busy` is never created locally
 * `.qfs/pending` is never synchronized but may occur in a tar file
 * Only files, links, and directories are represented

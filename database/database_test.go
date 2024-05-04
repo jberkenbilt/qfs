@@ -170,11 +170,11 @@ func TestMemory(t *testing.T) {
 	db1, err := database.OpenFile("testdata/real.qfs")
 	testutil.Check(t, err)
 	defer func() { _ = db1.Close() }()
-	db2 := database.Memory{}
-	testutil.Check(t, db2.Load(db1))
+	db2, err := database.Load(db1)
+	testutil.Check(t, err)
 	defer func() { _ = db2.Close() }()
-	db3 := database.Memory{}
-	testutil.Check(t, db3.Load(db2))
+	db3, err := database.Load(db2)
+	testutil.Check(t, err)
 	defer func() { _ = db3.Close() }()
 	if !reflect.DeepEqual(db2, db3) {
 		t.Errorf("round trip through memory db failed")
