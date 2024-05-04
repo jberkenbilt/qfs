@@ -408,12 +408,10 @@ and running `qfs init-repo` again.
 To set up a new site, do the following on the site:
 * Locally create `.qfs/repo/config`
 * Write the site's name to `.qfs/site`
-* Run `qfs init-site`, which does the following:
-  * If `.qfs/sites/$site/db` already exists on the repository, offer to remove it. If it is not
-    removed, fail.
-  * Pull the `.qfs` directory from the repository.
-
-You can now create `.qfs/sites/$site/filter` locally (if not already present) and run `qfs pull`.
+* If you are recreating a site that previously existed, remove any existing `.qfs/sites/$site/db`
+  file. This will create momentary drift in the repo, but it will be resolved after the next push.
+* Run `qfs pull`. If there is no filter for the site, this will only pull the `.qfs` directory. In
+  that case, you can create a local filter and run `qfs pull` again.
 
 Note that bad things will happen if you have two simultaneously existing sites with the same name.
 If you need to recreate a previously existing site, such as if you lose a site and want to pull its
@@ -518,7 +516,11 @@ Run `qfs pull`. This does the following:
 * Download the repository's copy of its own database to `.qfs/pending/repo/db`
 * Read the repository's copy of the current site's database into memory, and diff it against the
   repository's copy of its own database (which we just downloaded) using the repository's copies of
-  the global filter and the site's filter.
+  the global filter and the site's filter. For bootstrapping to work:
+  * If the repository doesn't have a copy of the site's database, treat it as empty.
+  * If the repository doesn't have a copy of the site's filter, check locally. If there is no local
+    filter either, then treat the filter as one that excludes everything, which means only the
+    `.qfs` directory will be included.
 * Perform conflict checking. Note that if files were extracted from the tar file, most of the local
   files will already have their desired end states.
 * If `-n` was given, stop.
@@ -685,6 +687,23 @@ This would give us the following workflow:
 
 There would likely need to be some indicator on the disconnected site that it was an offline site,
 perhaps by having a special value, such as `offline` as the content of `.qfs/repo/config`.
+
+# Bootstrap Walk-through
+
+* Initialize the repository
+  ```
+  mkdir -p .qfs/repo
+  echo s3://bucket/prefix > .qfs/repo/config
+  qfs init-repo
+  ```
+* Create the repo filter in `.qfs/filters/repo`
+* Initialize site
+  ```
+  echo site1 > .qfs/site
+  ```
+* Create site filter in `.qfs/filters/site1`
+* `qfs push`
+
 
 # Other Notes
 

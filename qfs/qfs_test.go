@@ -503,6 +503,8 @@ func TestCLI(t *testing.T) {
 	checkCli([]string{"qfs", "scan", "-potato"}, "unknown option")
 	checkCli([]string{"qfs", "scan", "-junk", "??*"}, "regexp error on ??*")
 	checkCli([]string{"qfs", "scan", "-filter", "testdata/bad-filter"}, "testdata/bad-filter:1: regexp error")
+	checkCli([]string{"qfs", "init-repo", "x"}, "unexpected positional argument \"x\"")
+	checkCli([]string{"qfs", "init-repo", "-top"}, "top requires an argument")
 }
 
 func TestHelpVersion(t *testing.T) {

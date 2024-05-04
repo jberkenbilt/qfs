@@ -425,16 +425,13 @@ func TestInitRepo(t *testing.T) {
 	testutil.Check(t, os.MkdirAll(j(".qfs/repo"), 0777))
 	testutil.Check(t, os.WriteFile(j(repo.ConfigFile), []byte("s3://"+TestBucket+"/home"), 0666))
 	testutil.Check(t, err)
-	r, err := repo.New(
-		repo.WithLocalTop(tmp),
-		repo.WithS3Client(s3Client),
-	)
-	testutil.Check(t, err)
-	err = r.Init()
+	qfs.S3Client = s3Client
+	defer func() { qfs.S3Client = nil }()
+	err = qfs.Run([]string{"qfs", "init-repo", "-top", tmp})
 	if err != nil {
 		t.Errorf("init: %v", err)
 	}
-	err = r.Init()
+	err = qfs.Run([]string{"qfs", "init-repo", "-top", tmp})
 	if err == nil || !strings.Contains(err.Error(), "already initialized") {
 		t.Errorf("wrong error: %v", err)
 	}

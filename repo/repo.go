@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ const (
 	ConfigFile = ".qfs/repo/config"
 	DbFile     = ".qfs/repo/db"
 	PendingDb  = ".qfs/pending/repo/db"
+	Busy       = ".qfs/busy"
 )
 
 type Repo struct {
@@ -68,10 +70,36 @@ func WithLocalTop(path string) func(r *Repo) {
 	}
 }
 
+// WithS3Client sets the s3 client to use. If nil, the default client will be used.
 func WithS3Client(s3Client *s3.Client) func(r *Repo) {
 	return func(r *Repo) {
 		r.s3Client = s3Client
 	}
+}
+
+func (r *Repo) createBusy() error {
+	input := &s3.PutObjectInput{
+		Bucket: &r.bucket,
+		Key:    aws.String(filepath.Join(r.prefix, Busy)),
+		Body:   bytes.NewBuffer(make([]byte, 0)),
+	}
+	_, err := r.s3Client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("create \"busy\" object: %w", err)
+	}
+	return nil
+}
+
+func (r *Repo) removeBusy() error {
+	input := &s3.DeleteObjectInput{
+		Bucket: &r.bucket,
+		Key:    aws.String(filepath.Join(r.prefix, Busy)),
+	}
+	_, err := r.s3Client.DeleteObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("remove \"busy\" object: %w", err)
+	}
+	return nil
 }
 
 func (r *Repo) IsInitialized() (bool, error) {
@@ -100,7 +128,16 @@ func (r *Repo) Init() error {
 		return err
 	}
 	if isInitialized {
-		return fmt.Errorf("repository is already initialized; delete %s to re-initialize", DbFile)
+		return fmt.Errorf(
+			"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
+			r.bucket,
+			r.prefix,
+			DbFile,
+		)
+	}
+	err = r.createBusy()
+	if err != nil {
+		return err
 	}
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
@@ -120,6 +157,10 @@ func (r *Repo) Init() error {
 		return err
 	}
 	err = src.Store(tmpDb, DbFile)
+	if err != nil {
+		return err
+	}
+	err = r.removeBusy()
 	if err != nil {
 		return err
 	}

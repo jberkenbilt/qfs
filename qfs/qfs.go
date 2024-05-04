@@ -4,15 +4,19 @@ package qfs
 import (
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/repo"
 	"github.com/jberkenbilt/qfs/scan"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+var S3Client *s3.Client // Overridden in test suite
 
 type parser struct {
 	progName      string
@@ -20,6 +24,7 @@ type parser struct {
 	args          []string
 	arg           int
 	action        actionKey
+	top           string // local root directory instead of current directory
 	input1        string
 	input2        string
 	filters       []*filter.Filter
@@ -50,6 +55,7 @@ const (
 	atTop argTableIdx = iota
 	atScan
 	atDiff
+	atInitRepo
 )
 
 type actionKey int
@@ -58,6 +64,7 @@ const (
 	actNone actionKey = iota
 	actScan
 	actDiff
+	actInitRepo
 )
 
 var argTables = func() map[argTableIdx]map[string]argHandler {
@@ -90,6 +97,9 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 			"no-ownerships": argNoOwnerships,
 			"checks":        argChecks,
 		},
+		atInitRepo: {
+			"top": argTop,
+		},
 	}
 	for _, i := range []argTableIdx{atScan, atDiff} {
 		for arg, fn := range filterArgs {
@@ -111,6 +121,7 @@ func (p *parser) check() error {
 		if p.input2 == "" {
 			return errors.New("diff requires two inputs")
 		}
+	case atInitRepo:
 	}
 	return nil
 }
@@ -134,6 +145,15 @@ func argVersion(q *parser, _ string) error {
 	return nil
 }
 
+func argTop(q *parser, arg string) error {
+	if q.arg >= len(q.args) {
+		return fmt.Errorf("%s requires an argument", arg)
+	}
+	q.top = q.args[q.arg]
+	q.arg++
+	return nil
+}
+
 func argSubcommand(q *parser, arg string) error {
 	switch arg {
 	case "scan":
@@ -142,6 +162,9 @@ func argSubcommand(q *parser, arg string) error {
 	case "diff":
 		q.argTable = atDiff
 		q.action = actDiff
+	case "init-repo":
+		q.argTable = atInitRepo
+		q.action = actInitRepo
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -287,7 +310,6 @@ func (p *parser) handleArg() error {
 	handler, ok := argTables[p.argTable][opt]
 	if !ok {
 		if opt == "" {
-			// TEST: NOT COVERED. All our subcommands accept positional arguments.
 			return fmt.Errorf("unexpected positional argument \"%s\"", arg)
 		}
 		return fmt.Errorf("unknown option \"%s\"", arg)
@@ -349,35 +371,50 @@ func (p *parser) doDiff() error {
 	return nil
 }
 
+func (p *parser) doInitRepo() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.Init()
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
 	}
-	q := &parser{
+	p := &parser{
 		progName: filepath.Base(args[0]),
 		argTable: atTop,
 		args:     args[1:],
 		arg:      0,
 		action:   actNone,
 	}
-	for q.arg < len(q.args) {
-		if err := q.handleArg(); err != nil {
+	for p.arg < len(p.args) {
+		if err := p.handleArg(); err != nil {
 			return err
 		}
 	}
-	if err := q.check(); err != nil {
+	if err := p.check(); err != nil {
 		return err
 	}
-	if q.dynamicFilter != nil {
-		q.filters = append(q.filters, q.dynamicFilter)
+	if p.dynamicFilter != nil {
+		p.filters = append(p.filters, p.dynamicFilter)
 	}
-	switch q.action {
-	case actScan:
-		return q.doScan()
-	case actDiff:
-		return q.doDiff()
-	default:
+	switch p.action {
+	case actNone:
 		// TEST: NOT COVERED. Can't actually happen.
-		return fmt.Errorf("no action specified; use %s --help for help", q.progName)
+		return fmt.Errorf("no action specified; use %s --help for help", p.progName)
+	case actScan:
+		return p.doScan()
+	case actDiff:
+		return p.doDiff()
+	case actInitRepo:
+		return p.doInitRepo()
 	}
+	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
+	return nil
 }
