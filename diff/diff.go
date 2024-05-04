@@ -27,45 +27,45 @@ type Diff struct {
 }
 
 type Check struct {
-	path    string
-	modTime []int64
+	Path    string
+	ModTime []int64
 }
 
 func (c *Check) String() string {
 	s := "check"
-	for _, m := range c.modTime {
+	for _, m := range c.ModTime {
 		s += " " + strconv.Itoa(int(m))
 	}
-	s += " - " + c.path + "\n"
+	s += " - " + c.Path + "\n"
 	return s
 }
 
 type MetaChange struct {
-	path        string
-	permissions *uint16
-	uid         *int
-	gid         *int
-	dirTime     *int64
+	Path        string
+	Permissions *uint16
+	Uid         *int
+	Gid         *int
+	DirTime     *int64
 }
 
 func (m *MetaChange) String() string {
 	var s string
-	if m.permissions != nil {
-		s += fmt.Sprintf("chmod %04o %s\n", *m.permissions, m.path)
+	if m.Permissions != nil {
+		s += fmt.Sprintf("chmod %04o %s\n", *m.Permissions, m.Path)
 	}
-	if m.uid != nil || m.gid != nil {
+	if m.Uid != nil || m.Gid != nil {
 		s += "chown "
-		if m.uid != nil {
-			s += strconv.Itoa(*m.uid)
+		if m.Uid != nil {
+			s += strconv.Itoa(*m.Uid)
 		}
 		s += ":"
-		if m.gid != nil {
-			s += strconv.Itoa(*m.gid)
+		if m.Gid != nil {
+			s += strconv.Itoa(*m.Gid)
 		}
-		s += " " + m.path + "\n"
+		s += " " + m.Path + "\n"
 	}
-	if m.dirTime != nil {
-		s += fmt.Sprintf("mtime %d %s\n", *m.dirTime, m.path)
+	if m.DirTime != nil {
+		s += fmt.Sprintf("mtime %d %s\n", *m.DirTime, m.Path)
 	}
 	return s
 }
@@ -195,8 +195,8 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 		f := data.fOld
 		if f.FileType == fileinfo.TypeFile {
 			r.Check = append(r.Check, &Check{
-				path:    f.Path,
-				modTime: []int64{f.ModTime.UnixMilli()},
+				Path:    f.Path,
+				ModTime: []int64{f.ModTime.UnixMilli()},
 			})
 		}
 		r.Rm = append(r.Rm, f.Path)
@@ -204,8 +204,8 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 		// The file is new. Allow it to already exist with the correct modification time.
 		f := data.fNew
 		r.Check = append(r.Check, &Check{
-			path:    f.Path,
-			modTime: []int64{f.ModTime.UnixMilli()},
+			Path:    f.Path,
+			ModTime: []int64{f.ModTime.UnixMilli()},
 		})
 		r.Add = append(r.Add, f)
 	} else {
@@ -215,8 +215,8 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 			if data.fNew.ModTime != data.fOld.ModTime || data.fNew.FileType != fileinfo.TypeFile {
 				// The file will be replaced or overwritten. Allow the file to have the old modification time.
 				check := &Check{
-					path: path,
-					modTime: []int64{
+					Path: path,
+					ModTime: []int64{
 						data.fOld.ModTime.UnixMilli(),
 					},
 				}
@@ -224,7 +224,7 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 					// The file is being overwritten. Allow the file to have either the old
 					// modification, indicating that the file was not touched on the other side, or
 					// the new modification time, indicating that it has already been updated.
-					check.modTime = append(check.modTime, data.fNew.ModTime.UnixMilli())
+					check.ModTime = append(check.ModTime, data.fNew.ModTime.UnixMilli())
 				}
 				r.Check = append(r.Check, check)
 			}
@@ -244,23 +244,23 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 			// The old and new file are the same type but not regular files. There will be
 			// some metadata change. It's possible for more than one of these to happen.
 			m := &MetaChange{
-				path: path,
+				Path: path,
 			}
 			if !d.noDirTimes {
 				if data.fOld.ModTime != data.fNew.ModTime && data.fOld.FileType == fileinfo.TypeDirectory {
 					t := data.fNew.ModTime.UnixMilli()
-					m.dirTime = &t
+					m.DirTime = &t
 				}
 			}
 			if data.fOld.Permissions != data.fNew.Permissions {
-				m.permissions = &data.fNew.Permissions
+				m.Permissions = &data.fNew.Permissions
 			}
 			if !d.noOwnerships {
 				if data.fOld.Uid != data.fNew.Uid {
-					m.uid = &data.fNew.Uid
+					m.Uid = &data.fNew.Uid
 				}
 				if data.fOld.Gid != data.fNew.Gid {
-					m.gid = &data.fNew.Gid
+					m.Gid = &data.fNew.Gid
 				}
 			}
 			r.MetaChange = append(r.MetaChange, m)

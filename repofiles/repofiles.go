@@ -9,8 +9,16 @@ const (
 	Site       = ".qfs/site"
 )
 
+func PendingDir(site string) string {
+	return ".qfs/pending/" + site
+}
+
 func PendingDb(site string) string {
-	return ".qfs/pending/" + site + "/db"
+	return PendingDir(site) + "/db"
+}
+
+func PendingDiff(site string) string {
+	return PendingDir(site) + "/diff"
 }
 
 func SiteDb(site string) string {

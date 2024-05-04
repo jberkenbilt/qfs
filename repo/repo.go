@@ -220,11 +220,15 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 	// Open the local copy of the repo database early
-	localRepoDb, err := database.Open(r.localPath(repofiles.RepoDb()))
+	localRepoFiles, err := database.Open(r.localPath(repofiles.RepoDb()))
 	if err != nil {
 		return err
 	}
-	defer func() { _ = localRepoDb.Close() }()
+	defer func() { _ = localRepoFiles.Close() }()
+	localRepoDb, err := database.Load(localRepoFiles)
+	if err != nil {
+		return err
+	}
 	// Generate the local site database using prunes only from the repo and site filters.
 	filterFiles := []string{
 		repofiles.SiteFilter(repofiles.RepoSite),
@@ -283,14 +287,68 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	// XXX HERE -- do conflict checking
-	// XXX
-	err = diffResult.WriteDiff(os.Stdout, true)
-	if err != nil {
-		return err
+
+	if !config.NoOp {
+		if err := os.MkdirAll(r.localPath(repofiles.PendingDir(repofiles.RepoSite)).Path(), 0777); err != nil {
+			return err
+		}
+		f, err := os.Create(r.localPath(repofiles.PendingDiff(repofiles.RepoSite)).Path())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		err = diffResult.WriteDiff(f, true)
+		if err != nil {
+			return err
+		}
+		if err = f.Close(); err != nil {
+			return err
+		}
 	}
 
-	// XXX remember rest of config
+	conflicts := false
+	for _, ch := range diffResult.Check {
+		info, ok := localRepoDb[ch.Path]
+		if !ok {
+			// It's fine if it doesn't exist.
+		} else {
+			conflict := true
+			for _, m := range ch.ModTime {
+				if m == info.ModTime.UnixMilli() {
+					conflict = false
+					break
+				}
+			}
+			if conflict {
+				conflicts = true
+				_, _ = fmt.Fprintf(os.Stderr, "%s: conflict: modTime=%v\n", ch.Path, info.ModTime)
+			}
+		}
+	}
+	if conflicts {
+		if !config.NoOp {
+			fmt.Printf("Conflicts detected. Override? [y/n] ")
+			var answer string
+			_, err = fmt.Scanln(&answer)
+			if err != nil {
+				return err
+			}
+			if answer == "y" {
+				conflicts = false
+			}
+		}
+		if conflicts {
+			return fmt.Errorf("conflicts detected")
+		}
+	}
+	if config.NoOp {
+		fmt.Println("no conflicts found")
+		return nil
+	}
+
+	// XXX Remember LocalTar, LocalSite, SaveSiteTar
+
+	// XXX apply changes using misc.DoConcurrently
 
 	return nil
 }
