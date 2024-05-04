@@ -36,6 +36,10 @@ func TestRoundTrip(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "create database \"/does/not/exist\": ") {
 		t.Errorf("wrong error: %v", err)
 	}
+	err = database.WriteDb("/etc/no-permission", db1, database.DbQfs)
+	if err == nil || !strings.HasPrefix(err.Error(), "create database \"/etc/no-permission\": ") {
+		t.Errorf("wrong error: %v", err)
+	}
 	err = database.WriteDb(j("qsync-to-qfs"), db1, database.DbQfs)
 	testutil.Check(t, err)
 	db2, err := database.OpenFile(j("qsync-to-qfs"))

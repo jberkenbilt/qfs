@@ -10,6 +10,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -259,6 +260,17 @@ func (tr *Traverser) Traverse(
 	notifyFn func(string),
 	errFn func(error),
 ) (*Result, error) {
+	progName := filepath.Base(os.Args[0])
+	if notifyFn == nil {
+		notifyFn = func(msg string) {
+			_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", progName, msg)
+		}
+	}
+	if errFn == nil {
+		errFn = func(err error) {
+			_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
+		}
+	}
 	numWorkers := 5 * runtime.NumCPU()
 	var workerWait sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {

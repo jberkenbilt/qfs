@@ -11,6 +11,7 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/s3source"
+	"github.com/jberkenbilt/qfs/traverse"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,7 @@ type Options func(*Repo)
 const (
 	ConfigFile = ".qfs/repo/config"
 	DbFile     = ".qfs/repo/db"
+	PendingDb  = ".qfs/pending/repo/db"
 )
 
 type Repo struct {
@@ -92,7 +94,44 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 	return fileinfo.NewPath(fileinfo.NewLocal(r.localTop), relPath)
 }
 
+func (r *Repo) Init() error {
+	isInitialized, err := r.IsInitialized()
+	if err != nil {
+		return err
+	}
+	if isInitialized {
+		return fmt.Errorf("repository is already initialized; delete %s to re-initialize", DbFile)
+	}
+	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
+	if err != nil {
+		return err
+	}
+	tr, err := traverse.New("", traverse.WithSource(src))
+	if err != nil {
+		return err
+	}
+	files, err := tr.Traverse(nil, nil)
+	if err != nil {
+		return err
+	}
+	tmpDb := r.localPath(PendingDb).Path()
+	err = database.WriteDb(tmpDb, files, database.DbRepo)
+	if err != nil {
+		return err
+	}
+	err = src.Store(tmpDb, DbFile)
+	if err != nil {
+		return err
+	}
+	err = os.Rename(tmpDb, r.localPath(DbFile).Path())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (r *Repo) LoadDb(localCopy string) (database.Memory, error) {
+	// XXX
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
 		return nil, err

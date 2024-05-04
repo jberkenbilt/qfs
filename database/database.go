@@ -11,6 +11,7 @@ import (
 	"github.com/jberkenbilt/qfs/filter"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -395,6 +396,10 @@ func WriteDb(filename string, files fileinfo.Provider, format DbFormat) error {
 		header = "QFS REPO 1\n"
 	}
 
+	err := os.MkdirAll(filepath.Dir(filename), 0777)
+	if err != nil {
+		return fmt.Errorf("create database \"%s\": %w", filename, err)
+	}
 	w, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("create database \"%s\": %w", filename, err)

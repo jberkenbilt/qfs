@@ -398,6 +398,7 @@ func TestNoClient(t *testing.T) {
 }
 
 func TestRepo_IsInitialized(t *testing.T) {
+	setUpTestBucket()
 	_, err := repo.New(
 		repo.WithS3Client(s3Client),
 	)
@@ -412,6 +413,29 @@ func TestRepo_IsInitialized(t *testing.T) {
 	v, err := r.IsInitialized()
 	testutil.Check(t, err)
 	if v {
-		t.Errorf("xxx: %v", err)
+		t.Errorf("repo is initialized when brand new")
+	}
+}
+
+func TestInitRepo(t *testing.T) {
+	setUpTestBucket()
+	tmp := t.TempDir()
+	j := func(path string) string { return filepath.Join(tmp, path) }
+	err := gztar.Extract("testdata/files.tar.gz", tmp)
+	testutil.Check(t, os.MkdirAll(j(".qfs/repo"), 0777))
+	testutil.Check(t, os.WriteFile(j(repo.ConfigFile), []byte("s3://"+TestBucket+"/home"), 0666))
+	testutil.Check(t, err)
+	r, err := repo.New(
+		repo.WithLocalTop(tmp),
+		repo.WithS3Client(s3Client),
+	)
+	testutil.Check(t, err)
+	err = r.Init()
+	if err != nil {
+		t.Errorf("init: %v", err)
+	}
+	err = r.Init()
+	if err == nil || !strings.Contains(err.Error(), "already initialized") {
+		t.Errorf("wrong error: %v", err)
 	}
 }
