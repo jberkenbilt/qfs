@@ -12,6 +12,7 @@ import (
 	"github.com/jberkenbilt/qfs/gztar"
 	"github.com/jberkenbilt/qfs/qfs"
 	"github.com/jberkenbilt/qfs/repo"
+	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
@@ -423,7 +424,7 @@ func TestInitRepo(t *testing.T) {
 	j := func(path string) string { return filepath.Join(tmp, path) }
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	testutil.Check(t, os.MkdirAll(j(".qfs/repo"), 0777))
-	testutil.Check(t, os.WriteFile(j(repo.ConfigFile), []byte("s3://"+TestBucket+"/home"), 0666))
+	testutil.Check(t, os.WriteFile(j(repofiles.RepoConfig), []byte("s3://"+TestBucket+"/home"), 0666))
 	testutil.Check(t, err)
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()

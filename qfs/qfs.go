@@ -20,7 +20,6 @@ var S3Client *s3.Client // Overridden in test suite
 
 type parser struct {
 	progName      string
-	argTable      argTableIdx
 	args          []string
 	arg           int
 	action        actionKey
@@ -38,6 +37,7 @@ type parser struct {
 	noDirTimes    bool
 	noOwnerships  bool
 	checks        bool
+	noOp          bool
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -49,14 +49,6 @@ type parser struct {
 const Version = "0.0"
 
 type argHandler func(*parser, string) error
-type argTableIdx int
-
-const (
-	atTop argTableIdx = iota
-	atScan
-	atDiff
-	atInitRepo
-)
 
 type actionKey int
 
@@ -65,9 +57,10 @@ const (
 	actScan
 	actDiff
 	actInitRepo
+	actPush
 )
 
-var argTables = func() map[argTableIdx]map[string]argHandler {
+var argTables = func() map[actionKey]map[string]argHandler {
 	var filterArgs = map[string]argHandler{
 		"filter":       argFilter,
 		"filter-prune": argFilter,
@@ -78,30 +71,35 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 		"f":            argFilesOnly,
 		"no-special":   argNoSpecial,
 	}
-	a := map[argTableIdx]map[string]argHandler{
-		atTop: {
+	a := map[actionKey]map[string]argHandler{
+		actNone: {
 			"":        argSubcommand,
 			"help":    argHelp,
 			"version": argVersion,
 		},
-		atScan: {
+		actScan: {
 			"":        argScanPositional,
 			"long":    argLong,
 			"db":      argDb,
 			"cleanup": argCleanup,
 			"xdev":    argXDev,
 		},
-		atDiff: {
+		actDiff: {
 			"":              argDiffPositional,
 			"no-dir-times":  argNoDirTimes,
 			"no-ownerships": argNoOwnerships,
 			"checks":        argChecks,
 		},
-		atInitRepo: {
+		actInitRepo: {
 			"top": argTop,
 		},
+		actPush: {
+			"top":     argTop,
+			"cleanup": argCleanup,
+			"n":       argNoOp,
+		},
 	}
-	for _, i := range []argTableIdx{atScan, atDiff} {
+	for _, i := range []actionKey{actScan, actDiff} {
 		for arg, fn := range filterArgs {
 			a[i][arg] = fn
 		}
@@ -110,18 +108,19 @@ var argTables = func() map[argTableIdx]map[string]argHandler {
 }()
 
 func (p *parser) check() error {
-	switch p.argTable {
-	case atTop:
+	switch p.action {
+	case actNone:
 		return fmt.Errorf("run %s --help for help", p.progName)
-	case atScan:
+	case actScan:
 		if p.input1 == "" {
 			return errors.New("scan requires an input")
 		}
-	case atDiff:
+	case actDiff:
 		if p.input2 == "" {
 			return errors.New("diff requires two inputs")
 		}
-	case atInitRepo:
+	case actInitRepo:
+	case actPush:
 	}
 	return nil
 }
@@ -157,14 +156,13 @@ func argTop(q *parser, arg string) error {
 func argSubcommand(q *parser, arg string) error {
 	switch arg {
 	case "scan":
-		q.argTable = atScan
 		q.action = actScan
 	case "diff":
-		q.argTable = atDiff
 		q.action = actDiff
 	case "init-repo":
-		q.argTable = atInitRepo
 		q.action = actInitRepo
+	case "push":
+		q.action = actPush
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -233,6 +231,11 @@ func argLong(q *parser, _ string) error {
 
 func argCleanup(q *parser, _ string) error {
 	q.cleanup = true
+	return nil
+}
+
+func argNoOp(q *parser, _ string) error {
+	q.noOp = true
 	return nil
 }
 
@@ -307,7 +310,7 @@ func (p *parser) handleArg() error {
 	} else if strings.HasPrefix(arg, "-") {
 		opt = arg[1:]
 	}
-	handler, ok := argTables[p.argTable][opt]
+	handler, ok := argTables[p.action][opt]
 	if !ok {
 		if opt == "" {
 			return fmt.Errorf("unexpected positional argument \"%s\"", arg)
@@ -345,20 +348,14 @@ func (p *parser) doScan() error {
 }
 
 func (p *parser) doDiff() error {
-	d, err := diff.New(
-		p.input1,
-		p.input2,
+	d := diff.New(
 		diff.WithFilters(p.filters),
 		diff.WithFilesOnly(p.filesOnly),
 		diff.WithNoSpecial(p.noSpecial),
 		diff.WithNoDirTimes(p.noDirTimes),
 		diff.WithNoOwnerships(p.noOwnerships),
 	)
-	if err != nil {
-		// TEST: NOT COVERED. diff.New never returns an error.
-		return fmt.Errorf("create diff: %w", err)
-	}
-	r, err := d.Run()
+	r, err := d.RunFiles(p.input1, p.input2)
 	if err != nil {
 		return fmt.Errorf("diff: %w", err)
 	}
@@ -382,13 +379,29 @@ func (p *parser) doInitRepo() error {
 	return r.Init()
 }
 
+func (p *parser) doPush() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.Push(&repo.PushConfig{
+		Cleanup:     p.cleanup,
+		NoOp:        p.noOp,
+		LocalTar:    "", // XXX
+		SaveSite:    "", // XXX
+		SaveSiteTar: "", // XXX
+	})
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
 	}
 	p := &parser{
 		progName: filepath.Base(args[0]),
-		argTable: atTop,
 		args:     args[1:],
 		arg:      0,
 		action:   actNone,
@@ -414,6 +427,8 @@ func Run(args []string) error {
 		return p.doDiff()
 	case actInitRepo:
 		return p.doInitRepo()
+	case actPush:
+		return p.doPush()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil

@@ -423,12 +423,12 @@ Run `qfs push`. This does the following:
 * If `.qfs/busy` exists in the repository, stop and tell the user to repair the database with `qfs
   init-db`.
 * Regenerate the local database as `.qfs/sites/$site/db`, applying only prune (and junk) directives
-  from the repository filter and site filters, and automatically including `.qfs` subject to the
-  rules above. Using only prune entries makes the site database more useful and also improves the
-  behavior of when filters are updated after a site has been in use for a while. For example, if
-  there are files in the repository that you had locally but had not included in the filter, if you
-  subsequently add them to the filter, the next `qfs pull` operation will have correct knowledge of
-  what you already had.
+  from the repository filter and site filters, omitting special files, and automatically including
+  `.qfs` subject to the rules above. Using only prune entries makes the site database more useful
+  and also improves the behavior of when filters are updated after a site has been in use for a
+  while. For example, if there are files in the repository that you had locally but had not included
+  in the filter, if you subsequently add them to the filter, the next `qfs pull` operation will have
+  correct knowledge of what you already had.
 * Diff the local site's database with the _local copy_ of the repository database. Use the site's
   filter and the repository filter with the automatic settings for the `.qfs` directory as described
   above. Using the local copy of the repository's database makes it safe to run multiple push

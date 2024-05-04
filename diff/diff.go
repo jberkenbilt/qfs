@@ -18,8 +18,6 @@ type oldNew struct {
 }
 
 type Diff struct {
-	input1       string
-	input2       string
 	filters      []*filter.Filter
 	filesOnly    bool
 	noSpecial    bool
@@ -36,15 +34,12 @@ type Result struct {
 	MetaChange []string // {chmod mode path|[link]chown [uid]:[gid] path|mtime mtime dir}
 }
 
-func New(input1, input2 string, options ...Options) (*Diff, error) {
-	q := &Diff{
-		input1: input1,
-		input2: input2,
-	}
+func New(options ...Options) *Diff {
+	d := &Diff{}
 	for _, fn := range options {
-		fn(q)
+		fn(d)
 	}
-	return q, nil
+	return d
 }
 
 func WithFilters(filters []*filter.Filter) func(*Diff) {
@@ -77,10 +72,10 @@ func WithNoDirTimes(noDirTimes bool) func(*Diff) {
 	}
 }
 
-// Run diffs the input sources.
-func (d *Diff) Run() (*Result, error) {
+// RunFiles diffs the input sources.
+func (d *Diff) RunFiles(input1, input2 string) (*Result, error) {
 	s1, err := scan.New(
-		d.input1,
+		input1,
 		scan.WithFilters(d.filters),
 		scan.WithFilesOnly(d.filesOnly),
 		scan.WithNoSpecial(d.noSpecial),
@@ -90,7 +85,7 @@ func (d *Diff) Run() (*Result, error) {
 		return nil, err
 	}
 	s2, err := scan.New(
-		d.input2,
+		input2,
 		scan.WithFilters(d.filters),
 		scan.WithFilesOnly(d.filesOnly),
 		scan.WithNoSpecial(d.noSpecial),
@@ -109,13 +104,7 @@ func (d *Diff) Run() (*Result, error) {
 		return nil, err
 	}
 	defer func() { _ = files2.Close() }()
-	r := &Result{}
-	err = d.diff(r, files1, files2)
-	if err != nil {
-		// TEST: NOT COVERED
-		return nil, err
-	}
-	return r, nil
+	return d.Run(files1, files2)
 }
 
 func workGet(work map[string]*oldNew, path string) *oldNew {
@@ -127,7 +116,7 @@ func workGet(work map[string]*oldNew, path string) *oldNew {
 	return entry
 }
 
-func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
+func (d *Diff) Run(files1, files2 fileinfo.Provider) (*Result, error) {
 	work := map[string]*oldNew{}
 	err := files1.ForEach(func(f *fileinfo.FileInfo) error {
 		workGet(work, f.Path).fOld = f
@@ -135,7 +124,7 @@ func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
 	})
 	if err != nil {
 		// TEST: NOT COVERED
-		return err
+		return nil, err
 	}
 	err = files2.ForEach(func(f *fileinfo.FileInfo) error {
 		workGet(work, f.Path).fNew = f
@@ -143,14 +132,15 @@ func (d *Diff) diff(r *Result, files1, files2 fileinfo.Provider) error {
 	})
 	if err != nil {
 		// TEST: NOT COVERED
-		return err
+		return nil, err
 	}
 	paths := maps.Keys(work)
 	sort.Strings(paths)
+	r := &Result{}
 	for _, path := range paths {
 		d.compare(r, path, work[path])
 	}
-	return nil
+	return r, nil
 }
 
 func (d *Diff) compare(r *Result, path string, data *oldNew) {

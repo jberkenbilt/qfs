@@ -10,10 +10,12 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/queue"
+	"github.com/jberkenbilt/qfs/repofiles"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +48,7 @@ type Traverser struct {
 	q          *queue.Queue[*treeNode]
 	rootDev    uint64
 	filters    []*filter.Filter
+	override   func(string) bool
 	sameDev    bool
 	cleanup    bool
 	filesOnly  bool
@@ -54,7 +57,7 @@ type Traverser struct {
 
 func (tr *Traverser) getNode(node *treeNode) error {
 	path := tr.root.Join(node.path)
-	included, group := filter.IsIncluded(node.path, tr.filters...)
+	included, group := filter.IsIncluded(node.path, tr.override, tr.filters...)
 	node.included = included
 	var err error
 	if node.s3Dir {
@@ -246,6 +249,43 @@ func WithNoSpecial(noSpecial bool) func(*Traverser) {
 func WithSource(fs fileinfo.Source) func(*Traverser) {
 	return func(tr *Traverser) {
 		tr.fs = fs
+	}
+}
+
+func WithQfsOverride(site string) func(traverser *Traverser) {
+	return func(tr *Traverser) {
+		// This is clunky. We need an override function because a file has to be included
+		// by all filters to be included, and we want to ensure certain .qfs files are
+		// always there. We use an additional filter to exclude some things, but then we
+		// have to use an override file to avoid the need for every filter to include
+		// .qfs.
+		var excludes = []string{
+			repofiles.Site,
+			repofiles.Busy,
+			repofiles.RepoConfig,
+			repofiles.SiteDb(site),
+		}
+		qfsFilter := filter.New()
+		excludeMap := map[string]struct{}{}
+		for _, x := range excludes {
+			qfsFilter.AddPath(filter.Exclude, x)
+			excludeMap[x] = struct{}{}
+		}
+		qfsFilter.AddPath(filter.Prune, repofiles.Pending)
+		tr.filters = append(tr.filters, qfsFilter)
+		tr.override = func(p string) bool {
+			// For inclusion of everything under .qfs except what we excluded above.
+			if !strings.HasPrefix(p, repofiles.TopPrefix) {
+				return false
+			}
+			if strings.HasPrefix(p, repofiles.Pending+"/") {
+				return false
+			}
+			if _, ok := excludeMap[p]; ok {
+				return false
+			}
+			return true
+		}
 	}
 }
 

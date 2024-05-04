@@ -15,7 +15,10 @@ func TestFilter(t *testing.T) {
 	check := func(p string, expIncluded bool, expGroup filter.Group) {
 		t.Helper()
 		f2.SetDefaultInclude(false)
-		included, group := filter.IsIncluded(p, f1, f2)
+		override := func(p string) bool {
+			return p == "one/prune/potato"
+		}
+		included, group := filter.IsIncluded(p, override, f1, f2)
 		if included != expIncluded {
 			t.Errorf("%s: included = %v, wanted = %v", p, included, expIncluded)
 		}
@@ -23,7 +26,7 @@ func TestFilter(t *testing.T) {
 			t.Errorf("%s: group = %v, wanted = %v", p, group, expGroup)
 		}
 		f2.SetDefaultInclude(true)
-		newIncluded, newGroup := filter.IsIncluded(p, f1, f2)
+		newIncluded, newGroup := filter.IsIncluded(p, override, f1, f2)
 		if group != newGroup {
 			t.Errorf("%s: junk changed when default changed", p)
 		}
@@ -91,9 +94,11 @@ func TestFilter(t *testing.T) {
 	check("a/always-exclude/RCS/yes", true, filter.Include)
 	// not matched by any rule
 	check("a/potato/salad/default", false, filter.Default)
+	// Override
+	check("one/prune/potato", true, filter.Include)
 
 	// No filters = include
-	included, group := filter.IsIncluded("anything")
+	included, group := filter.IsIncluded("anything", nil)
 	if !(included && group == filter.Default) {
 		t.Errorf("wrong behavior with no filters")
 	}
@@ -103,7 +108,7 @@ func TestFilter(t *testing.T) {
 		defer func() {
 			gotPanic = recover().(string)
 		}()
-		_, _ = filter.IsIncluded("/oops", f1)
+		_, _ = filter.IsIncluded("/oops", nil, f1)
 	}()
 	if gotPanic != "Filter.IsIncluded must be called with a relative path" {
 		t.Errorf("wrong panic: %s", gotPanic)

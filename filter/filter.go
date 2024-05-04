@@ -136,8 +136,14 @@ func (fg *filterGroup) match(path string, base string) bool {
 // IsIncluded tests whether the path is included by all the given filters. The
 // highest-priority matching group that caused the decision is returned. The
 // groups in decreasing priority are Junk, Prune, Include, Exclude, and Default.
-// Note that Junk applies only to the last path element.
-func IsIncluded(path string, filters ...*Filter) (included bool, group Group) {
+// Note that Junk applies only to the last path element. If override is not nil,
+// it is called after junk, and if it returns true, the file is included without
+// checking other filters.
+func IsIncluded(
+	path string,
+	override func(string) bool,
+	filters ...*Filter,
+) (included bool, group Group) {
 	// Iterate on the path, starting at the path and going up the directory
 	// hierarchy, until there is a conclusive result. If none, use the default for
 	// the filter. We check junk and prune all the way up first for all filters, then
@@ -161,6 +167,10 @@ func IsIncluded(path string, filters ...*Filter) (included bool, group Group) {
 		if f.junk != nil && f.junk.MatchString(base) {
 			return false, Junk
 		}
+	}
+
+	if override != nil && override(path) {
+		return true, Include
 	}
 
 	// Check prune. Prune is checked at each path level. Nothing can override prune,

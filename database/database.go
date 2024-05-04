@@ -216,7 +216,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 		}
 		db.lastFields = fields
 		if f != nil {
-			included, _ := filter.IsIncluded(f.Path, db.filters...)
+			included, _ := filter.IsIncluded(f.Path, nil, db.filters...)
 			if included && (db.filesOnly || db.noSpecial) {
 				switch f.FileType {
 				case fileinfo.TypeBlockDev:
