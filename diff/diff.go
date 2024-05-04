@@ -36,7 +36,37 @@ func (c *Check) String() string {
 	for _, m := range c.modTime {
 		s += " " + strconv.Itoa(int(m))
 	}
-	s += " - " + c.path
+	s += " - " + c.path + "\n"
+	return s
+}
+
+type MetaChange struct {
+	path        string
+	permissions *uint16
+	uid         *int
+	gid         *int
+	dirTime     *int64
+}
+
+func (m *MetaChange) String() string {
+	var s string
+	if m.permissions != nil {
+		s += fmt.Sprintf("chmod %04o %s\n", *m.permissions, m.path)
+	}
+	if m.uid != nil || m.gid != nil {
+		s += "chown "
+		if m.uid != nil {
+			s += strconv.Itoa(*m.uid)
+		}
+		s += ":"
+		if m.gid != nil {
+			s += strconv.Itoa(*m.gid)
+		}
+		s += " " + m.path + "\n"
+	}
+	if m.dirTime != nil {
+		s += fmt.Sprintf("mtime %d %s\n", *m.dirTime, m.path)
+	}
 	return s
 }
 
@@ -46,7 +76,7 @@ type Result struct {
 	Rm         []string // path
 	Add        []*fileinfo.FileInfo
 	Change     []*fileinfo.FileInfo
-	MetaChange []string // {chmod mode path|[link]chown [uid]:[gid] path|mtime mtime dir}
+	MetaChange []*MetaChange
 }
 
 func New(options ...Options) *Diff {
@@ -213,35 +243,27 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 		} else {
 			// The old and new file are the same type but not regular files. There will be
 			// some metadata change. It's possible for more than one of these to happen.
+			m := &MetaChange{
+				path: path,
+			}
 			if !d.noDirTimes {
 				if data.fOld.ModTime != data.fNew.ModTime && data.fOld.FileType == fileinfo.TypeDirectory {
-					r.MetaChange = append(
-						r.MetaChange,
-						fmt.Sprintf("mtime %d %s", data.fNew.ModTime.UnixMilli(), path),
-					)
+					t := data.fNew.ModTime.UnixMilli()
+					m.dirTime = &t
 				}
 			}
 			if data.fOld.Permissions != data.fNew.Permissions {
-				r.MetaChange = append(
-					r.MetaChange,
-					fmt.Sprintf("chmod %04o %s", data.fNew.Permissions, path),
-				)
+				m.permissions = &data.fNew.Permissions
 			}
 			if !d.noOwnerships {
-				change := ":"
 				if data.fOld.Uid != data.fNew.Uid {
-					change = fmt.Sprintf("%d:", data.fNew.Uid)
+					m.uid = &data.fNew.Uid
 				}
 				if data.fOld.Gid != data.fNew.Gid {
-					change = fmt.Sprintf("%s%d", change, data.fNew.Gid)
-				}
-				if change != ":" {
-					r.MetaChange = append(
-						r.MetaChange,
-						fmt.Sprintf("chown %s %s", change, path),
-					)
+					m.gid = &data.fNew.Gid
 				}
 			}
+			r.MetaChange = append(r.MetaChange, m)
 		}
 	}
 }
@@ -249,7 +271,7 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 func (r *Result) WriteDiff(f *os.File, withChecks bool) error {
 	if withChecks {
 		for _, m := range r.Check {
-			if _, err := fmt.Fprintln(f, m.String()); err != nil {
+			if _, err := fmt.Fprint(f, m.String()); err != nil {
 				// TEST: NOT COVERED
 				return err
 			}
@@ -286,7 +308,7 @@ func (r *Result) WriteDiff(f *os.File, withChecks bool) error {
 		}
 	}
 	for _, m := range r.MetaChange {
-		if _, err := fmt.Fprintf(f, "%s\n", m); err != nil {
+		if _, err := fmt.Fprint(f, m.String()); err != nil {
 			// TEST: NOT COVERED
 			return err
 		}
