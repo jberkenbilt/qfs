@@ -42,6 +42,11 @@ type PushConfig struct {
 
 var s3Re = regexp.MustCompile(`^s3://([^/]+)/(.*)\n?$`)
 var ctx = context.Background()
+var progName = filepath.Base(os.Args[0])
+
+func msg(format string, args ...any) {
+	fmt.Printf("%s: %s\n", progName, fmt.Sprintf(format, args...))
+}
 
 func New(options ...Options) (*Repo, error) {
 	r := &Repo{}
@@ -154,12 +159,14 @@ func (r *Repo) Init() error {
 		return err
 	}
 	if isInitialized {
-		return fmt.Errorf(
-			"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
-			r.bucket,
-			r.prefix,
-			repofiles.RepoDb(),
-		)
+		if !misc.Prompt("Repository is already initialized; regenerate database?") {
+			return fmt.Errorf(
+				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
+				r.bucket,
+				r.prefix,
+				repofiles.RepoDb(),
+			)
+		}
 	}
 
 	err = r.createBusy()
@@ -200,7 +207,7 @@ func (r *Repo) traverseAndStore() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("uploading repository database")
+	msg("uploading repository database")
 	err = src.Store(tmpDb, repofiles.RepoDb())
 	if err != nil {
 		return err
@@ -263,7 +270,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("generating local database")
+	msg("generating local database")
 	localFiles, err := tr.Traverse(nil, nil)
 	if err != nil {
 		return err
@@ -343,13 +350,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 	if conflicts {
 		if !config.NoOp {
-			fmt.Printf("Conflicts detected. Override? [y/n] ")
-			var answer string
-			_, err = fmt.Scanln(&answer)
-			if err != nil {
-				return err
-			}
-			if answer == "y" {
+			if misc.Prompt("Conflicts detected. Override?") {
 				conflicts = false
 			}
 		}
@@ -358,7 +359,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 	}
 	if config.NoOp {
-		fmt.Println("no conflicts found")
+		msg("no conflicts found")
 		return nil
 	}
 
@@ -382,8 +383,9 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 		var objects []types.ObjectIdentifier
 		for _, p := range batch {
+			msg("removing %s", p)
 			objects = append(objects, types.ObjectIdentifier{
-				Key: aws.String(p),
+				Key: aws.String(filepath.Join(r.prefix, p)),
 			})
 		}
 		deleteBatch := types.Delete{
@@ -425,7 +427,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	misc.DoConcurrently(
 		func(c chan *fileinfo.FileInfo, errorChan chan error) {
 			for f := range c {
-				fmt.Printf("storing %s\n", f.Path)
+				msg("storing %s", f.Path)
 				err = src.Store(r.localPath(f.Path), f.Path)
 				if err != nil {
 					errorChan <- err
@@ -447,7 +449,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		// No changes
 		if downloaded {
 			// Our local copy was outdated, so update it.
-			fmt.Println("updating local copy of repository database")
+			msg("updating local copy of repository database")
 			err = os.Rename(
 				r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path(),
 				r.localPath(repofiles.RepoDb()).Path(),
@@ -456,7 +458,7 @@ func (r *Repo) Push(config *PushConfig) error {
 				return err
 			}
 		} else {
-			fmt.Println("no changes required to repository database")
+			msg("no changes required to repository database")
 		}
 	} else {
 		err = r.traverseAndStore()
@@ -466,7 +468,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 
 	// Store the site's database in the repository
-	fmt.Println("uploading site database")
+	msg("uploading site database")
 	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
 	if err != nil {
 		return err
@@ -491,12 +493,12 @@ func (r *Repo) loadRepoDb(localPath *fileinfo.Path) (bool, database.Memory, erro
 		return false, nil, err
 	}
 	if !requiresCopy {
-		fmt.Println("local copy of repository database is current")
+		msg("local copy of repository database is current")
 		toLoad = localPath
 	}
 	downloaded := false
 	if toLoad == nil {
-		fmt.Println("downloading latest repository database")
+		msg("downloading latest repository database")
 		downloaded = true
 		pending := r.localPath(repofiles.PendingDb(repofiles.RepoSite))
 		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())

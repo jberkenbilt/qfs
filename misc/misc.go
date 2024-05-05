@@ -1,6 +1,9 @@
 package misc
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // DoConcurrently is a simple worker pool implementation. It starts up numWorkers
 // goroutines and, in each, calls `work(c, errorChan)`. Any errors that `work`
@@ -31,4 +34,12 @@ func DoConcurrently[T any, errorT any](
 	wg.Wait()
 	close(errorChan)
 	<-errorDone
+}
+
+// Prompt asks a yes/no question. It appends ` [y/n] ` to the prompt.
+func Prompt(prompt string) bool {
+	fmt.Printf("%s [y/n] ", prompt)
+	var answer string
+	_, _ = fmt.Scanln(&answer)
+	return answer == "y"
 }

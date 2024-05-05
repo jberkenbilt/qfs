@@ -129,7 +129,7 @@ func argHelp(q *parser, _ string) error {
 	fmt.Printf(`
 Usage: %s
 
-XXX
+XXX -- generate usage and also shell completion
 
 `,
 		q.progName,
