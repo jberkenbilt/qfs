@@ -31,9 +31,11 @@ var ctx = context.Background()
 type Options func(*S3Source)
 
 type S3Source struct {
-	s3Client *s3.Client
-	bucket   string
-	prefix   string
+	s3Client   *s3.Client
+	uploader   *manager.Uploader
+	downloader *manager.Downloader
+	bucket     string
+	prefix     string
 	// Everything below requires mutex protection.
 	m         sync.Mutex
 	modTimes  map[string]time.Time
@@ -54,6 +56,8 @@ func New(bucket, prefix string, options ...Options) (*S3Source, error) {
 	if s.s3Client == nil {
 		return nil, fmt.Errorf("an s3 client must be given when creating an S3Source")
 	}
+	s.uploader = manager.NewUploader(s.s3Client)
+	s.downloader = manager.NewDownloader(s.s3Client)
 	return s, nil
 }
 
@@ -318,14 +322,13 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	if body == nil {
 		body = &bytes.Buffer{}
 	}
-	uploader := manager.NewUploader(s.s3Client)
 	input := &s3.PutObjectInput{
 		Bucket:   &s.bucket,
 		Key:      &key,
 		Body:     body,
 		Metadata: metadata,
 	}
-	_, err = uploader.Upload(ctx, input)
+	_, err = s.uploader.Upload(ctx, input)
 	if err != nil {
 		// TEST: NOT COVERED
 		return fmt.Errorf("upload %s: %w", s.FullPath(repoPath), err)
@@ -335,13 +338,56 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 
 // Retrieve retrieves a file from the repository. No action is performed
 // If localPath has the same size and modification time as indicated in the repo.
-// The return value indicates whether the file was actually downloaded.
+// The return value indicates whether the file changed.
 func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	srcPath := fileinfo.NewPath(s, repoPath)
 	destPath := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
 	srcInfo, err := srcPath.FileInfo()
 	if err != nil {
 		return false, err
+	}
+	if srcInfo.FileType == fileinfo.TypeLink {
+		target, err := os.Readlink(localPath)
+		if err == nil && target == srcInfo.Special {
+			return false, nil
+		}
+		err = os.MkdirAll(filepath.Dir(localPath), 0777)
+		if err != nil {
+			return false, err
+		}
+		err = os.RemoveAll(localPath)
+		if err != nil {
+			return false, err
+		}
+		err = os.Symlink(srcInfo.Special, localPath)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	} else if srcInfo.FileType == fileinfo.TypeDirectory {
+		p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
+		info, err := p.FileInfo()
+		created := false
+		if err != nil || info.FileType != fileinfo.TypeDirectory {
+			err = os.RemoveAll(localPath)
+			if err != nil {
+				return false, err
+			}
+			err = os.MkdirAll(localPath, 0777)
+			if err != nil {
+				return false, err
+			}
+			created = true
+		}
+		if err := os.Chmod(localPath, fs.FileMode(srcInfo.Permissions)); err != nil {
+			return false, fmt.Errorf("set mode for %s: %w", localPath, err)
+		}
+		// Ignore directory times.
+		return created, nil
+	} else if srcInfo.FileType != fileinfo.TypeFile {
+		// TEST: NOT COVERED. There is no way to represent this, and Store doesn't store
+		// specials.
+		return false, fmt.Errorf("downloading special files is not supported")
 	}
 	requiresCopy, err := fileinfo.RequiresCopy(srcPath, destPath)
 	if err != nil {
@@ -350,18 +396,22 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	if !requiresCopy {
 		return false, nil
 	}
+	err = os.MkdirAll(filepath.Dir(localPath), 0777)
+	if err != nil {
+		return false, err
+	}
+	err = os.Chmod(localPath, fs.FileMode(srcInfo.Permissions|0o600))
 	f, err := os.Create(localPath)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = f.Close() }()
 	key := filepath.Join(s.prefix, repoPath)
-	downloader := manager.NewDownloader(s.s3Client)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	_, err = downloader.Download(ctx, f, input)
+	_, err = s.downloader.Download(ctx, f, input)
 	if err != nil {
 		return false, err
 	}

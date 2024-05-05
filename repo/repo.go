@@ -17,6 +17,7 @@ import (
 	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/traverse"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +40,13 @@ type PushConfig struct {
 	SaveSite    string
 	SaveSiteTar string
 }
+
+type PullConfig struct {
+	NoOp    bool
+	SiteTar string
+}
+
+const numWorkers = 10
 
 var s3Re = regexp.MustCompile(`^s3://([^/]+)/(.*)\n?$`)
 var ctx = context.Background()
@@ -227,6 +235,52 @@ func (r *Repo) currentSite() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+func checkConflicts(
+	checks []*diff.Check,
+	allowOverride bool,
+	getInfo func(path string) (*fileinfo.FileInfo, error),
+) error {
+	conflicts := false
+	for _, ch := range checks {
+		info, err := getInfo(ch.Path)
+		if err != nil {
+			return err
+		}
+		if info == nil {
+			// It's fine if it doesn't exist.
+		} else {
+			conflict := true
+			for _, m := range ch.ModTime {
+				if m == info.ModTime.UnixMilli() {
+					conflict = false
+					break
+				}
+			}
+			if conflict {
+				conflicts = true
+				_, _ = fmt.Fprintf(os.Stderr, "%s: conflict: modTime=%v\n", ch.Path, info.ModTime)
+			}
+		}
+	}
+	if conflicts && allowOverride && misc.Prompt("Conflicts detected. Override?") {
+		conflicts = false
+	}
+	if conflicts {
+		return fmt.Errorf("conflicts detected")
+	}
+	return nil
+}
+
+func makeDiff(filters []*filter.Filter) *diff.Diff {
+	return diff.New(
+		diff.WithFilters(filters),
+		diff.WithNoOwnerships(true),
+		diff.WithNoSpecial(true),
+		diff.WithNoDirTimes(true),
+		diff.WithRepoRules(true),
+	)
+}
+
 func (r *Repo) Push(config *PushConfig) error {
 	err := r.checkBusy()
 	if err != nil {
@@ -296,11 +350,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 		filters = append(filters, f)
 	}
-	d := diff.New(
-		diff.WithFilters(filters),
-		diff.WithNoOwnerships(true),
-		diff.WithNoSpecial(true),
-	)
+	d := makeDiff(filters)
 	diffResult, err := d.Run(localRepoDb, localDb)
 	if err != nil {
 		return err
@@ -324,39 +374,20 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 	}
 
-	downloaded, remoteRepoDb, err := r.loadRepoDb(r.localPath(repofiles.RepoDb()))
+	downloaded, remoteRepoDb, err := r.loadRepoDb()
 	if err != nil {
 		return err
 	}
 
-	conflicts := false
-	for _, ch := range diffResult.Check {
-		info, ok := remoteRepoDb[ch.Path]
+	err = checkConflicts(diffResult.Check, !config.NoOp, func(path string) (*fileinfo.FileInfo, error) {
+		info, ok := remoteRepoDb[path]
 		if !ok {
-			// It's fine if it doesn't exist.
-		} else {
-			conflict := true
-			for _, m := range ch.ModTime {
-				if m == info.ModTime.UnixMilli() {
-					conflict = false
-					break
-				}
-			}
-			if conflict {
-				conflicts = true
-				_, _ = fmt.Fprintf(os.Stderr, "%s: conflict: modTime=%v\n", ch.Path, info.ModTime)
-			}
+			return nil, nil
 		}
-	}
-	if conflicts {
-		if !config.NoOp {
-			if misc.Prompt("Conflicts detected. Override?") {
-				conflicts = false
-			}
-		}
-		if conflicts {
-			return fmt.Errorf("conflicts detected")
-		}
+		return info, nil
+	})
+	if err != nil {
+		return err
 	}
 	if config.NoOp {
 		msg("no conflicts found")
@@ -412,7 +443,6 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
-	const numWorkers = 10
 	c := make(chan *fileinfo.FileInfo, numWorkers)
 	go func() {
 		for _, f := range diffResult.Add {
@@ -420,6 +450,11 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 		for _, f := range diffResult.Change {
 			c <- f
+		}
+		for _, f := range diffResult.MetaChange {
+			if f.Permissions != nil {
+				c <- f.Info
+			}
 		}
 		close(c)
 	}()
@@ -445,7 +480,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 
 	// If we made any changes, update the repo database. Otherwise, update our local copy if needed.
-	if len(diffResult.Change) == 0 && len(diffResult.Add) == 0 && len(diffResult.Rm) == 0 {
+	if len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) == 0 {
 		// No changes
 		if downloaded {
 			// Our local copy was outdated, so update it.
@@ -481,7 +516,192 @@ func (r *Repo) Push(config *PushConfig) error {
 	return nil
 }
 
-func (r *Repo) loadRepoDb(localPath *fileinfo.Path) (bool, database.Memory, error) {
+func (r *Repo) Pull(config *PullConfig) error {
+	err := r.checkBusy()
+	if err != nil {
+		return err
+	}
+	site, err := r.currentSite()
+	if err != nil {
+		return err
+	}
+	downloadedRepoDb, repoDb, err := r.loadRepoDb()
+	if err != nil {
+		return err
+	}
+
+	// Load the repository copy of the site database. If not found, use an empty database.
+	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
+	if err != nil {
+		return err
+	}
+	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(site))
+	files, err := database.Open(repoSiteDbPath, database.WithRepoRules(true))
+	var siteDb database.Memory
+	var nsk *types.NoSuchKey
+	if errors.As(err, &nsk) {
+		msg("repository doesn't contain a database for this site")
+		siteDb = database.Memory{}
+	} else if err != nil {
+		return err
+	} else {
+		msg("loading site database from repository")
+		defer func() { _ = files.Close() }()
+		siteDb, err = database.Load(files)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Load filters from the repository. If the site filter doesn't exist on the
+	// repository, fall back to a local copy for bootstrapping. This makes it
+	// possible to bootstrap a new site from the new site rather than pre-creating
+	// the filter.
+	repoFilter := filter.New()
+	repoFilterPath := fileinfo.NewPath(src, repofiles.SiteFilter(repofiles.RepoSite))
+	err = repoFilter.ReadFile(repoFilterPath, false)
+	if err != nil {
+		return fmt.Errorf("reading repository copy of repository filter: %w", err)
+	}
+	siteFilterPath := fileinfo.NewPath(src, repofiles.SiteFilter(site))
+	siteFilter := filter.New()
+	err = siteFilter.ReadFile(siteFilterPath, false)
+	if errors.As(err, &nsk) {
+		msg("site filter does not exist on the repository; trying locally")
+		siteFilterPath = r.localPath(repofiles.SiteFilter(site))
+		err = siteFilter.ReadFile(siteFilterPath, false)
+		if errors.Is(err, fs.ErrNotExist) {
+			msg("no filter is configured for this site; bootstrapping with exclude all")
+			siteFilter.SetDefaultInclude(false)
+		} else if err != nil {
+			return fmt.Errorf("reading local copy of site filter: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("reading repository copy of site filter: %w", err)
+	}
+	filters := []*filter.Filter{
+		repoFilter,
+		siteFilter,
+	}
+
+	// Look at differences between the repository's state and the repository's last
+	// record of the site's state.
+	d := makeDiff(filters)
+	diffResult, err := d.Run(siteDb, repoDb)
+	if err != nil {
+		return err
+	}
+
+	// Check conflicts
+	localSrc := fileinfo.NewLocal(r.localTop)
+	err = checkConflicts(diffResult.Check, !config.NoOp, func(path string) (*fileinfo.FileInfo, error) {
+		info, err := localSrc.FileInfo(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return info, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// XXX site tar
+
+	// Apply changes. Possible enhancement: make sure every directory we have to
+	// modify (by adding or removing files) is writable first, and if we change it,
+	// change it back. For now, if we try to modify a read-only directory, it will be
+	// an error. The user can change the permissions and run again. The pull
+	// operation will restore the permissions.
+
+	// Remove what needs to be removed, then add/modify, then apply permission
+	// changes. We ignore ownerships, directory modification times, and special
+	// files.
+	for _, rm := range diffResult.Rm {
+		path := r.localPath(rm).Path()
+		msg("removing %s", path)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+
+	// Make sure files we are changing will be writable. We will set the correct
+	// permissions when we replace them.
+	for _, ch := range diffResult.Change {
+		path := r.localPath(ch.Path)
+		err = os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
+		if err != nil {
+			return fmt.Errorf("%s: make writable: %w", path.Path(), err)
+		}
+	}
+
+	// Concurrently pull changed files from the repository. This sets permissions and modification time.
+	c := make(chan *fileinfo.FileInfo, numWorkers)
+	var allErrors []error
+	go func() {
+		for _, info := range diffResult.Add {
+			c <- info
+		}
+		for _, info := range diffResult.Change {
+			c <- info
+		}
+		close(c)
+	}()
+	misc.DoConcurrently(
+		func(c chan *fileinfo.FileInfo, errorChan chan error) {
+			for info := range c {
+				path := r.localPath(info.Path)
+				downloaded, err := src.Retrieve(info.Path, path.Path())
+				if err != nil {
+					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)
+				}
+				if downloaded {
+					msg("downloaded %s", info.Path)
+				}
+			}
+		},
+		func(e error) {
+			allErrors = append(allErrors, e)
+		},
+		c,
+		numWorkers,
+	)
+	if len(allErrors) > 0 {
+		return errors.Join(allErrors...)
+	}
+	for _, m := range diffResult.MetaChange {
+		if m.Permissions == nil {
+			continue
+		}
+		path := r.localPath(m.Info.Path).Path()
+		msg("chmod %04o %s", *m.Permissions, m.Info.Path)
+		err = os.Chmod(path, os.FileMode(*m.Permissions))
+		if err != nil {
+			return fmt.Errorf("chmod %04o %s: %w", *m.Permissions, path, err)
+		}
+	}
+
+	if downloadedRepoDb {
+		err = os.Rename(
+			r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path(),
+			r.localPath(repofiles.RepoDb()).Path(),
+		)
+		if err != nil {
+			return err
+		}
+	}
+	err = os.RemoveAll(r.localPath(repofiles.PendingDir(repofiles.RepoSite)).Path())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
+	localPath := r.localPath(repofiles.RepoDb())
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
 		return false, nil, err
@@ -511,6 +731,7 @@ func (r *Repo) loadRepoDb(localPath *fileinfo.Path) (bool, database.Memory, erro
 	if err != nil {
 		return false, nil, err
 	}
+	defer func() { _ = files.Close() }()
 	db, err := database.Load(files)
 	if err != nil {
 		return false, nil, err

@@ -69,6 +69,12 @@ diff them and get a list of what changed. You could also do this by running a `f
 and after and using regular `diff`, but `qfs diff` produces output that is a little more direct in
 telling you what changed.
 
+# Known Issues
+
+* If you exclude a directory and include something below the directory, the directory itself will
+  not be included, so its permissions will not be tracked. This is not necessarily a problem.
+* At present, pulling contents into read-only directories will not work.
+
 # CLI
 
 The `qfs` command is run as
@@ -508,6 +514,9 @@ Run `qfs pull`. This does the following:
         * Otherwise, make sure it is writable by temporarily overriding its and/or its parents'
           permissions for the duration of the write. The parent directory has to be writable by the
           user in all cases, and for files, the file also has to be user-writable.
+          * Note: in the initial implementation, if the directory is not writable, it will be an
+            error. The user can change the permissions and rerun pull, at which point pull will
+            restore the correct permissions.
       * For each changed or added link, delete the old link.
       * Extract the site tar file, keeping track of end directory permissions, and skipping any
         files or links that we determined already to be up to date.
@@ -543,6 +552,13 @@ for every file much as would be the case with something like Dropbox.
 There is facility for manually pushing a single file to a repository. This would be hard to do while
 keeping databases in sync and avoiding drift. If things need to be restored, fix the files locally
 and then run a push.
+
+### Manual Recovery
+
+If things get out of sync locally and you want to resync from the repository, you can use `push -n`
+to generate an updated local database and manually copy that to the respository, then do a pull.
+
+XXX Test this and make sure it works.
 
 ## Conflict Detection
 

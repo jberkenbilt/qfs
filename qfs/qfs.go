@@ -58,6 +58,7 @@ const (
 	actDiff
 	actInitRepo
 	actPush
+	actPull
 )
 
 var argTables = func() map[actionKey]map[string]argHandler {
@@ -98,6 +99,10 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"cleanup": argCleanup,
 			"n":       argNoOp,
 		},
+		actPull: {
+			"top": argTop,
+			"n":   argNoOp,
+		},
 	}
 	for _, i := range []actionKey{actScan, actDiff} {
 		for arg, fn := range filterArgs {
@@ -121,6 +126,7 @@ func (p *parser) check() error {
 		}
 	case actInitRepo:
 	case actPush:
+	case actPull:
 	}
 	return nil
 }
@@ -163,6 +169,8 @@ func argSubcommand(q *parser, arg string) error {
 		q.action = actInitRepo
 	case "push":
 		q.action = actPush
+	case "pull":
+		q.action = actPull
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -379,6 +387,20 @@ func (p *parser) doInitRepo() error {
 	return r.Init()
 }
 
+func (p *parser) doPull() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.Pull(&repo.PullConfig{
+		NoOp:    p.noOp,
+		SiteTar: "", // XXX
+	})
+}
+
 func (p *parser) doPush() error {
 	r, err := repo.New(
 		repo.WithLocalTop(p.top),
@@ -429,6 +451,8 @@ func Run(args []string) error {
 		return p.doInitRepo()
 	case actPush:
 		return p.doPush()
+	case actPull:
+		return p.doPull()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil

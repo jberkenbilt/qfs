@@ -20,6 +20,7 @@ type oldNew struct {
 
 type Diff struct {
 	filters      []*filter.Filter
+	repoRules    bool
 	filesOnly    bool
 	noSpecial    bool
 	noDirTimes   bool
@@ -41,7 +42,7 @@ func (c *Check) String() string {
 }
 
 type MetaChange struct {
-	Path        string
+	Info        *fileinfo.FileInfo
 	Permissions *uint16
 	Uid         *int
 	Gid         *int
@@ -51,7 +52,7 @@ type MetaChange struct {
 func (m *MetaChange) String() string {
 	var s string
 	if m.Permissions != nil {
-		s += fmt.Sprintf("chmod %04o %s\n", *m.Permissions, m.Path)
+		s += fmt.Sprintf("chmod %04o %s\n", *m.Permissions, m.Info.Path)
 	}
 	if m.Uid != nil || m.Gid != nil {
 		s += "chown "
@@ -62,10 +63,10 @@ func (m *MetaChange) String() string {
 		if m.Gid != nil {
 			s += strconv.Itoa(*m.Gid)
 		}
-		s += " " + m.Path + "\n"
+		s += " " + m.Info.Path + "\n"
 	}
 	if m.DirTime != nil {
-		s += fmt.Sprintf("mtime %d %s\n", *m.DirTime, m.Path)
+		s += fmt.Sprintf("mtime %d %s\n", *m.DirTime, m.Info.Path)
 	}
 	return s
 }
@@ -90,6 +91,12 @@ func New(options ...Options) *Diff {
 func WithFilters(filters []*filter.Filter) func(*Diff) {
 	return func(d *Diff) {
 		d.filters = filters
+	}
+}
+
+func WithRepoRules(repoRules bool) func(*Diff) {
+	return func(d *Diff) {
+		d.repoRules = repoRules
 	}
 }
 
@@ -189,6 +196,9 @@ func (d *Diff) Run(files1, files2 fileinfo.Provider) (*Result, error) {
 }
 
 func (d *Diff) compare(r *Result, path string, data *oldNew) {
+	if included, _ := filter.IsIncluded(path, d.repoRules, d.filters...); !included {
+		return
+	}
 	if data.fNew == nil {
 		// The file was removed. For regular files, make sure the file, if present, has
 		// the right modification time.
@@ -203,10 +213,12 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 	} else if data.fOld == nil {
 		// The file is new. Allow it to already exist with the correct modification time.
 		f := data.fNew
-		r.Check = append(r.Check, &Check{
-			Path:    f.Path,
-			ModTime: []int64{f.ModTime.UnixMilli()},
-		})
+		if f.FileType == fileinfo.TypeFile {
+			r.Check = append(r.Check, &Check{
+				Path:    f.Path,
+				ModTime: []int64{f.ModTime.UnixMilli()},
+			})
+		}
 		r.Add = append(r.Add, f)
 	} else {
 		// The file has changed. Add data for conflict detection when the old file is a
@@ -244,26 +256,33 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 			// The old and new file are the same type but not regular files. There will be
 			// some metadata change. It's possible for more than one of these to happen.
 			m := &MetaChange{
-				Path: path,
+				Info: data.fNew,
 			}
+			changes := false
 			if !d.noDirTimes {
 				if data.fOld.ModTime != data.fNew.ModTime && data.fOld.FileType == fileinfo.TypeDirectory {
 					t := data.fNew.ModTime.UnixMilli()
+					changes = true
 					m.DirTime = &t
 				}
 			}
 			if data.fOld.Permissions != data.fNew.Permissions {
+				changes = true
 				m.Permissions = &data.fNew.Permissions
 			}
 			if !d.noOwnerships {
 				if data.fOld.Uid != data.fNew.Uid {
+					changes = true
 					m.Uid = &data.fNew.Uid
 				}
 				if data.fOld.Gid != data.fNew.Gid {
+					changes = true
 					m.Gid = &data.fNew.Gid
 				}
 			}
-			r.MetaChange = append(r.MetaChange, m)
+			if changes {
+				r.MetaChange = append(r.MetaChange, m)
+			}
 		}
 	}
 }
