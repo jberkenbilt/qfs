@@ -32,6 +32,7 @@ const (
 	NoGroup Group = -1 - iota
 	Junk
 	Default
+	RepoRule
 )
 
 const (
@@ -170,9 +171,9 @@ func IsIncluded(
 		// directory. Most of the contents are specific to the local site, and it's
 		// important for filters to be included across all sites.
 		if strings.HasPrefix(path, repofiles.Filters+"/") {
-			return true, Include
+			return true, RepoRule
 		} else if strings.HasPrefix(path, repofiles.Top+"/") {
-			return false, Exclude
+			return false, RepoRule
 		}
 	}
 
@@ -202,13 +203,14 @@ func IsIncluded(
 	// included.
 	includeMatched := false
 	defaultInclude := true
-thisFilter:
+	usedFalseDefault := false
 	for _, f := range filters {
 		if !f.defaultInclude() {
 			// If any filter has defaultInclude false, that becomes the overall default.
 			defaultInclude = false
 		}
 		cur = path
+	thisFilter:
 		for {
 			base = filepath.Base(cur)
 			if f.groups[Include].match(cur, base) {
@@ -222,13 +224,15 @@ thisFilter:
 			}
 			cur = filepath.Dir(cur)
 			if cur == "." {
+				if !f.defaultInclude() {
+					usedFalseDefault = true
+				}
 				break
 			}
 		}
 	}
-	if includeMatched {
-		// This was explicitly included by at least one filter and not explicitly
-		// excluded by any filter.
+	if includeMatched && !usedFalseDefault {
+		// This was explicitly included by all filters.
 		return true, Include
 	}
 	return defaultInclude, Default

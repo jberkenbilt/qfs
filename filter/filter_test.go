@@ -8,27 +8,22 @@ import (
 
 func TestFilter(t *testing.T) {
 	f1 := filter.New()
-	f2 := filter.New()
 	// f1 has default include; check toggles f2 default include to exercise that only
 	// one filter needs false for false to prevail
-	f1.SetDefaultInclude(true)
 	check := func(p string, expIncluded bool, expGroup filter.Group) {
 		t.Helper()
-		f2.SetDefaultInclude(false)
-		included, group := filter.IsIncluded(p, false, f1, f2)
-		if included != expIncluded {
-			t.Errorf("%s: included = %v, wanted = %v", p, included, expIncluded)
-		}
-		if group != expGroup {
-			t.Errorf("%s: group = %v, wanted = %v", p, group, expGroup)
-		}
-		f2.SetDefaultInclude(true)
-		newIncluded, newGroup := filter.IsIncluded(p, false, f1, f2)
-		if group != newGroup {
-			t.Errorf("%s: junk changed when default changed", p)
-		}
-		if (newIncluded != included) != (group == filter.Default) {
-			t.Errorf("%s: unexpected default status", p)
+		for _, defaultInclude := range []bool{true, false} {
+			f1.SetDefaultInclude(defaultInclude)
+			included, group := filter.IsIncluded(p, false, f1)
+			if group != expGroup {
+				t.Errorf("%s: group = %v, wanted = %v", p, group, expGroup)
+			} else if expGroup == filter.Default {
+				if included != defaultInclude {
+					t.Errorf("%s: included didn't match default include", p)
+				}
+			} else if included != expIncluded {
+				t.Errorf("%s: included = %v, wanted = %v", p, included, expIncluded)
+			}
 		}
 	}
 	check("a/b/c", false, filter.Default)
@@ -63,11 +58,11 @@ func TestFilter(t *testing.T) {
 
 	f1.AddPath(filter.Exclude, "one/exclude")
 	f1.AddPath(filter.Include, "one/exclude/include")
-	f2.AddPath(filter.Prune, "one/prune")
-	f2.AddPath(filter.Include, "one/prune/include") // ignored
+	f1.AddPath(filter.Prune, "one/prune")
+	f1.AddPath(filter.Include, "one/prune/include") // ignored
 	f1.AddBase(filter.Prune, "no-sync")
 	f1.AddBase(filter.Include, "RCS")
-	f2.AddBase(filter.Exclude, "always-exclude")
+	f1.AddBase(filter.Exclude, "always-exclude")
 	addPattern(f1, filter.Include, ",v$")
 	// include overrides exclude
 	check("one/exclude/include/yes", true, filter.Include)
@@ -100,13 +95,49 @@ func TestFilter(t *testing.T) {
 
 	// Repo rules
 	included, group = filter.IsIncluded(".qfs/pending", true)
-	if included || group != filter.Exclude {
+	if included || group != filter.RepoRule {
 		t.Errorf("wrong result for repo rules exclude")
 	}
 	included, group = filter.IsIncluded(".qfs/filters/x", true)
-	if !included || group != filter.Include {
+	if !included || group != filter.RepoRule {
 		t.Errorf("wrong result for repo rules include")
 	}
+
+	// Multiple filters -- must be matched by all filters to be matched.
+	f2 := filter.New()
+	check2 := func(p string, f2Default bool, expGroup filter.Group) {
+		t.Helper()
+		f1.SetDefaultInclude(true)
+		for _, defaultInclude := range []bool{true, false} {
+			f2.SetDefaultInclude(defaultInclude)
+			included, group = filter.IsIncluded(p, false, f1, f2)
+			if f2Default && !defaultInclude {
+				if included || group != filter.Default {
+					t.Errorf("%s: wrong result when f2's default matched", p)
+				}
+			} else if group != expGroup {
+				t.Errorf("%s: group = %v, wanted = %v", p, group, expGroup)
+			} else if group == filter.Default {
+				if included != defaultInclude {
+					t.Errorf("%s: included != default include", p)
+				}
+			}
+		}
+	}
+
+	f1.AddPath(filter.Include, "shared")
+	f2.AddPath(filter.Include, "shared")
+	f1.AddPath(filter.Include, "only-one")
+	f2.AddPath(filter.Include, "only-two")
+	// Matched by f1, default behavior from f2
+	check2("a/always-exclude/RCS/yes", true, filter.Include)
+	check2("only-one/anything", true, filter.Include)
+	// Matched by both
+	check2("shared/potato", false, filter.Include)
+	// Matched by f2,default behavior from f1 (which is true)
+	check2("only-two/potato", false, filter.Include)
+	// Matched by both but expected by f1
+	check2("shared/always-exclude/nope", false, filter.Exclude)
 
 	gotPanic := ""
 	func() {
