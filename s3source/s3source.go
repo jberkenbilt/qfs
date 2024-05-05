@@ -283,9 +283,8 @@ func (s *S3Source) Remove(path string) error {
 // Store copies the local file at `path` into the repository with the appropriate
 // metadata. `path` is relative to top of the file collection in both the local
 // and repository contexts.
-func (s *S3Source) Store(localPath string, repoPath string) error {
-	p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
-	info, err := p.FileInfo()
+func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
+	info, err := localPath.FileInfo()
 	if err != nil {
 		return err
 	}
@@ -301,7 +300,7 @@ func (s *S3Source) Store(localPath string, repoPath string) error {
 		qfsData = fmt.Sprintf("%d %04o", info.ModTime.UnixMilli(), info.Permissions)
 	case fileinfo.TypeFile:
 		qfsData = fmt.Sprintf("%d %04o", info.ModTime.UnixMilli(), info.Permissions)
-		fileBody, err := p.Open()
+		fileBody, err := localPath.Open()
 		if err != nil {
 			// TEST: NOT COVERED
 			return err

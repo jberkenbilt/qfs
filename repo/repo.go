@@ -13,6 +13,7 @@ import (
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/traverse"
@@ -41,7 +42,6 @@ type PushConfig struct {
 
 var s3Re = regexp.MustCompile(`^s3://([^/]+)/(.*)\n?$`)
 var ctx = context.Background()
-var progName = filepath.Base(os.Args[0])
 
 func New(options ...Options) (*Repo, error) {
 	r := &Repo{}
@@ -161,10 +161,23 @@ func (r *Repo) Init() error {
 			repofiles.RepoDb(),
 		)
 	}
+
 	err = r.createBusy()
 	if err != nil {
 		return err
 	}
+	err = r.traverseAndStore()
+	if err != nil {
+		return err
+	}
+	err = r.removeBusy()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Repo) traverseAndStore() error {
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
 		return err
@@ -172,7 +185,7 @@ func (r *Repo) Init() error {
 	tr, err := traverse.New(
 		"",
 		traverse.WithSource(src),
-		traverse.WithQfsOverride("repo"),
+		traverse.WithRepoRules(true),
 	)
 	if err != nil {
 		return err
@@ -182,20 +195,17 @@ func (r *Repo) Init() error {
 		return err
 	}
 	defer func() { _ = files.Close() }()
-	tmpDb := r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path()
-	err = database.WriteDb(tmpDb, files, database.DbRepo)
+	tmpDb := r.localPath(repofiles.PendingDb(repofiles.RepoSite))
+	err = database.WriteDb(tmpDb.Path(), files, database.DbRepo)
 	if err != nil {
 		return err
 	}
+	fmt.Println("uploading repository database")
 	err = src.Store(tmpDb, repofiles.RepoDb())
 	if err != nil {
 		return err
 	}
-	err = r.removeBusy()
-	if err != nil {
-		return err
-	}
-	err = os.Rename(tmpDb, r.localPath(repofiles.RepoDb()).Path())
+	err = os.Rename(tmpDb.Path(), r.localPath(repofiles.RepoDb()).Path())
 	if err != nil {
 		return err
 	}
@@ -220,7 +230,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 	// Open the local copy of the repo database early
-	localRepoFiles, err := database.Open(r.localPath(repofiles.RepoDb()))
+	localRepoFiles, err := database.Open(r.localPath(repofiles.RepoDb()), database.WithRepoRules(true))
 	if err != nil {
 		return err
 	}
@@ -247,13 +257,13 @@ func (r *Repo) Push(config *PushConfig) error {
 		r.localTop,
 		traverse.WithNoSpecial(true),
 		traverse.WithFilters(filters),
-		traverse.WithQfsOverride(site),
+		traverse.WithRepoRules(true),
 		traverse.WithCleanup(config.Cleanup),
 	)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: generating local database\n", progName)
+	fmt.Println("generating local database")
 	localFiles, err := tr.Traverse(nil, nil)
 	if err != nil {
 		return err
@@ -263,7 +273,8 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	err = database.WriteDb(r.localPath(repofiles.SiteDb(site)).Path(), localDb, database.DbQfs)
+	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
+	err = database.WriteDb(localSiteDbPath.Path(), localDb, database.DbQfs)
 	if err != nil {
 		return err
 	}
@@ -306,9 +317,14 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 	}
 
+	downloaded, remoteRepoDb, err := r.loadRepoDb(r.localPath(repofiles.RepoDb()))
+	if err != nil {
+		return err
+	}
+
 	conflicts := false
 	for _, ch := range diffResult.Check {
-		info, ok := localRepoDb[ch.Path]
+		info, ok := remoteRepoDb[ch.Path]
 		if !ok {
 			// It's fine if it doesn't exist.
 		} else {
@@ -348,35 +364,154 @@ func (r *Repo) Push(config *PushConfig) error {
 
 	// XXX Remember LocalTar, LocalSite, SaveSiteTar
 
-	// XXX apply changes using misc.DoConcurrently
+	// Apply changes to the repository.
+	err = r.createBusy()
+	if err != nil {
+		return err
+	}
 
+	// Delete what needs to be deleted.
+	toDelete := diffResult.Rm
+	for len(toDelete) > 0 {
+		last := min(len(toDelete), 1000)
+		batch := toDelete[:last]
+		if len(batch) == last {
+			toDelete = nil
+		} else {
+			toDelete = toDelete[last:]
+		}
+		var objects []types.ObjectIdentifier
+		for _, p := range batch {
+			objects = append(objects, types.ObjectIdentifier{
+				Key: aws.String(p),
+			})
+		}
+		deleteBatch := types.Delete{
+			Objects: objects,
+		}
+		deleteInput := &s3.DeleteObjectsInput{
+			Bucket: &r.bucket,
+			Delete: &deleteBatch,
+		}
+		_, err = r.s3Client.DeleteObjects(ctx, deleteInput)
+		if err != nil {
+			return fmt.Errorf("delete keys: %w", err)
+		}
+	}
+
+	// Upload added and changed files.
+	src, err := s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+		s3source.WithDatabase(remoteRepoDb),
+	)
+	if err != nil {
+		return err
+	}
+
+	const numWorkers = 10
+	c := make(chan *fileinfo.FileInfo, numWorkers)
+	go func() {
+		for _, f := range diffResult.Add {
+			c <- f
+		}
+		for _, f := range diffResult.Change {
+			c <- f
+		}
+		close(c)
+	}()
+	var allErrors []error
+	misc.DoConcurrently(
+		func(c chan *fileinfo.FileInfo, errorChan chan error) {
+			for f := range c {
+				fmt.Printf("storing %s\n", f.Path)
+				err = src.Store(r.localPath(f.Path), f.Path)
+				if err != nil {
+					errorChan <- err
+				}
+			}
+		},
+		func(e error) {
+			allErrors = append(allErrors, e)
+		},
+		c,
+		numWorkers,
+	)
+	if len(allErrors) > 0 {
+		return errors.Join(allErrors...)
+	}
+
+	// If we made any changes, update the repo database. Otherwise, update our local copy if needed.
+	if len(diffResult.Change) == 0 && len(diffResult.Add) == 0 && len(diffResult.Rm) == 0 {
+		// No changes
+		if downloaded {
+			// Our local copy was outdated, so update it.
+			fmt.Println("updating local copy of repository database")
+			err = os.Rename(
+				r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path(),
+				r.localPath(repofiles.RepoDb()).Path(),
+			)
+			if err != nil {
+				return err
+			}
+		} else {
+			fmt.Println("no changes required to repository database")
+		}
+	} else {
+		err = r.traverseAndStore()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Store the site's database in the repository
+	fmt.Println("uploading site database")
+	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
+	if err != nil {
+		return err
+	}
+
+	err = r.removeBusy()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (r *Repo) LoadDb(localCopy string) (database.Memory, error) {
-	// XXX
+func (r *Repo) loadRepoDb(localPath *fileinfo.Path) (bool, database.Memory, error) {
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 	srcPath := fileinfo.NewPath(src, repofiles.RepoDb())
 	var toLoad *fileinfo.Path
-	if localCopy != "" {
-		localPath := r.localPath(localCopy)
-		requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
-		if err != nil {
-			return nil, err
-		}
-		if !requiresCopy {
-			toLoad = localPath
-		}
-	}
-	if toLoad == nil {
-		toLoad = srcPath
-	}
-	files, err := database.Open(toLoad)
+	requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
-	return database.Load(files)
+	if !requiresCopy {
+		fmt.Println("local copy of repository database is current")
+		toLoad = localPath
+	}
+	downloaded := false
+	if toLoad == nil {
+		fmt.Println("downloading latest repository database")
+		downloaded = true
+		pending := r.localPath(repofiles.PendingDb(repofiles.RepoSite))
+		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
+		if err != nil {
+			return false, nil, err
+		}
+		toLoad = pending
+	}
+	files, err := database.Open(toLoad, database.WithRepoRules(true))
+	if err != nil {
+		return false, nil, err
+	}
+	db, err := database.Load(files)
+	if err != nil {
+		return false, nil, err
+	}
+	return downloaded, db, nil
 }

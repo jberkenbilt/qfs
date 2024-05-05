@@ -135,7 +135,9 @@ func setUpTestBucket() {
 func TestS3Source(t *testing.T) {
 	setUpTestBucket()
 	tmp := t.TempDir()
-	j := func(path string) string { return filepath.Join(tmp, path) }
+	j := func(path string) *fileinfo.Path {
+		return fileinfo.NewPath(fileinfo.NewLocal(tmp), path)
+	}
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	testutil.Check(t, err)
 	makeSrc := func(db database.Memory) *s3source.S3Source {
@@ -174,11 +176,11 @@ func TestS3Source(t *testing.T) {
 	}
 
 	// Store errors
-	err = src.Store("/nope", "nope")
+	err = src.Store(fileinfo.NewPath(fileinfo.NewLocal(""), "/nope"), "nope")
 	if err == nil || !strings.Contains(err.Error(), "/nope") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = src.Store("/dev/null", "nope")
+	err = src.Store(fileinfo.NewPath(fileinfo.NewLocal(""), "/dev/null"), "nope")
 	if err == nil || !strings.Contains(err.Error(), "can only store files") {
 		t.Errorf("wrong error: %v", err)
 	}
@@ -217,10 +219,10 @@ func TestS3Source(t *testing.T) {
 	files := doTraverse(src)
 	mem1, err := database.Load(files)
 	testutil.Check(t, err)
-	testutil.Check(t, database.WriteDb(j("qfs-from-s3"), mem1, database.DbQfs))
-	testutil.Check(t, database.WriteDb(j("repo-from-s3"), mem1, database.DbRepo))
+	testutil.Check(t, database.WriteDb(j("qfs-from-s3").Path(), mem1, database.DbQfs))
+	testutil.Check(t, database.WriteDb(j("repo-from-s3").Path(), mem1, database.DbRepo))
 	stdout, stderr := testutil.WithStdout(func() {
-		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3"), j("repo-from-s3")})
+		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("repo-from-s3").Path()})
 		if err != nil {
 			t.Errorf("error from diff: %v", err)
 		}
@@ -229,7 +231,7 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("output: %s\n%s", stdout, stderr)
 	}
 	stdout, stderr = testutil.WithStdout(func() {
-		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3"), j("files")})
+		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("files").Path()})
 		if err != nil {
 			t.Errorf("error from diff: %v", err)
 		}
@@ -379,7 +381,7 @@ func TestS3Source(t *testing.T) {
 	dbFromS3, err := database.Open(s3Path)
 	testutil.Check(t, err)
 	defer func() { _ = dbFromS3.Close() }()
-	dbFromDisk, err := database.OpenFile(j("repo-from-s3"))
+	dbFromDisk, err := database.OpenFile(j("repo-from-s3").Path())
 	testutil.Check(t, err)
 	defer func() { _ = dbFromDisk.Close() }()
 	mem1, err = database.Load(dbFromS3)
@@ -404,7 +406,7 @@ func TestRepo_IsInitialized(t *testing.T) {
 		repo.WithS3Client(s3Client),
 	)
 	if err == nil || !strings.Contains(err.Error(), ".qfs/repo/config") {
-		t.Errorf("wrong error: %v", err.Error())
+		t.Errorf("wrong error: %v", err)
 	}
 	r, err := repo.New(
 		repo.WithLocalTop("testdata/files1"),

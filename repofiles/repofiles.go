@@ -2,7 +2,8 @@ package repofiles
 
 const (
 	RepoSite   = "repo"
-	TopPrefix  = ".qfs/"
+	Top        = ".qfs"
+	Filters    = ".qfs/filters"
 	RepoConfig = ".qfs/repo/config"
 	Pending    = ".qfs/pending"
 	Busy       = ".qfs/busy"
@@ -10,7 +11,7 @@ const (
 )
 
 func PendingDir(site string) string {
-	return ".qfs/pending/" + site
+	return Pending + "/" + site
 }
 
 func PendingDb(site string) string {

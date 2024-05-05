@@ -33,6 +33,7 @@ type Db struct {
 	lastRow    []byte
 	lastFields []string
 	filters    []*filter.Filter
+	repoRules  bool
 	filesOnly  bool
 	noSpecial  bool
 }
@@ -77,6 +78,12 @@ func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
 func WithFilters(filters []*filter.Filter) func(*Db) {
 	return func(db *Db) {
 		db.filters = filters
+	}
+}
+
+func WithRepoRules(repoRules bool) func(*Db) {
+	return func(db *Db) {
+		db.repoRules = repoRules
 	}
 }
 
@@ -216,7 +223,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 		}
 		db.lastFields = fields
 		if f != nil {
-			included, _ := filter.IsIncluded(f.Path, nil, db.filters...)
+			included, _ := filter.IsIncluded(f.Path, db.repoRules, db.filters...)
 			if included && (db.filesOnly || db.noSpecial) {
 				switch f.FileType {
 				case fileinfo.TypeBlockDev:

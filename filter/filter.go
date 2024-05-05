@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/repofiles"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -141,7 +142,7 @@ func (fg *filterGroup) match(path string, base string) bool {
 // checking other filters.
 func IsIncluded(
 	path string,
-	override func(string) bool,
+	repoRules bool,
 	filters ...*Filter,
 ) (included bool, group Group) {
 	// Iterate on the path, starting at the path and going up the directory
@@ -157,11 +158,6 @@ func IsIncluded(
 	if filepath.IsAbs(path) {
 		panic("Filter.IsIncluded must be called with a relative path")
 	}
-	if len(filters) == 0 {
-		// No filters = include everything.
-		return true, Default
-	}
-
 	base := filepath.Base(path)
 	for _, f := range filters {
 		if f.junk != nil && f.junk.MatchString(base) {
@@ -169,8 +165,20 @@ func IsIncluded(
 		}
 	}
 
-	if override != nil && override(path) {
-		return true, Include
+	if repoRules {
+		// When working with repositories, override the filters' treatment of the .qfs
+		// directory. Most of the contents are specific to the local site, and it's
+		// important for filters to be included across all sites.
+		if strings.HasPrefix(path, repofiles.Filters+"/") {
+			return true, Include
+		} else if strings.HasPrefix(path, repofiles.Top+"/") {
+			return false, Exclude
+		}
+	}
+
+	if len(filters) == 0 {
+		// No filters = include everything.
+		return true, Default
 	}
 
 	// Check prune. Prune is checked at each path level. Nothing can override prune,

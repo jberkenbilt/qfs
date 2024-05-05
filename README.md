@@ -322,12 +322,9 @@ operation is interrupted, the repository state can be repaired by regenerating t
 object metadata. The `busy` object is not sufficient to protect against race conditions from
 multiple simultaneous updaters.
 
-The repository contains a key for each file in the collection including the contents of the `.qfs`
-directory with the following specifics:
-* `.qfs/site` is never copied to a repository since this differs across sites
-* `.qfs/config` is not copied to the repository
-* `.qfs/busy` is never created locally
-* `.qfs/pending` is never synchronized but may occur in a tar file
+The repository contains a key for each file in the collection with the following specifics:
+* `.qfs/filters` is always included, but the rest of `.qfs` is excluded, regardless of filters
+* `.qfs/repo/db` and `.qfs/site/*/db` are copied to the repository explicitly
 * Only files, links, and directories are represented
 * Directory keys end with `/`, and directory objects are zero-length
 * Symbolic link objects are zero-length
@@ -423,7 +420,7 @@ Run `qfs push`. This does the following:
 * If `.qfs/busy` exists in the repository, stop and tell the user to repair the database with `qfs
   init-db`.
 * Regenerate the local database as `.qfs/sites/$site/db`, applying only prune (and junk) directives
-  from the repository filter and site filters, omitting special files, and automatically including
+  from the repository filter and site filters, omitting special files, and automatically handling
   `.qfs` subject to the rules above. Using only prune entries makes the site database more useful
   and also improves the behavior of when filters are updated after a site has been in use for a
   while. For example, if there are files in the repository that you had locally but had not included
@@ -448,14 +445,18 @@ Run `qfs push`. This does the following:
     the files that would be pushed
 * Otherwise, update the repository:
   * Create `.qfs/busy` on the repository
-  * Apply changes by processing the diff. All changes are made to the repository and to the working
-    repository database in memory.
+  * Apply changes by processing the diff. All changes are made to the repository. Ideally, changes
+    would be made to the working database, but this turns out to be impractical.
     * Recursively remove anything marked `rm` from s3
-    * For each added or changed file, upload a new version with appropriate metadata. Once uploaded,
-      do an immediate head-object (S3 has strong read-after-write consistency) so the in-memory
-      database update can include the object's modification time.
-  * Write the working repository database locally `.qfs/pending/repo/db`
-  * Upload `.qfs/penidng/repo/db` to `.qfs/repo/db` correct metadata
+    * For each added or changed file, upload a new version with appropriate metadata. The original
+      hope was that, once uploaded, we would do an immediate head-object (S3 has strong
+      read-after-write consistency) so the in-memory database update can include the object's
+      modification time. The problem is that head-object returns second-granularity timestamps,
+      while list-objects-v2 returns millisecond granularity, so instead, we will have to re-traverse
+      using the working repository database as a cache.
+  * Regenerate the repository database, writing locally to `.qfs/pending/repo/db`
+  * Upload `.qfs/pending/repo/db` to `.qfs/repo/db` with correct metadata
+  * Upload `.qfs/sites/$site/db` with correct metadata
   * Move `.qfs/pending/repo/db` to `.qfs/repo/db` locally
   * Delete `.qfs/busy` from the repository
   * If `-save-site` was given
