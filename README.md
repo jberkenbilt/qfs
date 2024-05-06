@@ -1,9 +1,19 @@
 # QFS
 
-Last full review: 2024-05-04
+Last full review: 2024-05-06
 
 # XXX work in
 
+* TO DO
+  * implement lifecycle test on what's there so far
+  * local-tar
+  * clean-repo
+  * push-db
+  * list
+  * get
+  * rsync
+* Decide if site tar is worth it. If not, search for `-save-site` and `-site-file` and move the
+  design of that feature to a separate part of the document in case it ever comes back.
 * Lifecycle tests
   * remember to check contents of `push` and `pull` files at least once
   * bootstrap
@@ -83,34 +93,6 @@ Last full review: 2024-05-04
     * push (restore file)
     * pull (no changes)
 
-* Add `clean-repo` to remove files that are not matched by the repo filter
-* Add `push-db` to regenerate and push the site's db to the repo
-* Maybe site tar is overkill for now
-* Directory structure change
-
-```
-.qfs/
-  filters/
-  db/
-    $site
-    repo
-
-local only
-.qfs/
-  site -- name of site
-  repo -- repo config
-  db/
-    $site.tmp -- working copy of repo's copy of site db
-    repo.tmp -- pending copy of repo db
-  push -- diff output for most recent push; indicates push without pull; deleted by pull
-  pull -- diff output from most recent pull; kept for future reference
-
-repo only
-
-./qfs/
-  busy
-```
-
 ----------
 
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
@@ -185,6 +167,10 @@ telling you what changed.
 * If you exclude a directory and include something below the directory, the directory itself will
   not be included, so its permissions will not be tracked. This is not necessarily a problem.
 * At present, pulling contents into read-only directories will not work.
+* The `push -save-site site file.tar.gz` and `pull -site-file file.tar.gz` features are not
+  implemented because the are complex, error-prone, and probably not necessary. If time proves that
+  to be correct, I will remove it from the main documentation and add it to a separate section.
+  Otherwise, I will implement it.
 
 # CLI
 
@@ -242,6 +228,11 @@ qfs subcommand [options]
   * `-n` -- perform conflict checking but make no changes
   * `-site-file file.tar.gz` -- use the specified tar file as a source of files that would be
     pulled. This is the file created by `push -save-site`.
+* `push-db` -- regenerate local db and push to repository
+  * When followed by `pull`, this can be used to revert a site to the state of the repo.
+* `clean-repo` -- remove files from the repository that are not matched by the filter
+  * This can be useful if things are pushed by mistake and then the repo filter is adjusted to
+    exclude them.
 * `list file` -- list all known versions of a file in the repository
   * For best results, use bucket versioning
 * `get file` -- copy a file from the repository
@@ -404,24 +395,33 @@ changes to a central repository with conflict detection.
   files in the intersection of the site filter and the global filter to the repository. All files in
   the collection exist in the repository even if no single site contains all the files.
 
-A file collection is defined by containing `.qfs` directory, which has the following layout:
-* `repo/`
-  * `config` -- contains s3://bucket/prefix. This file is not copied to the repository.
-  * `db` -- the repository's database
-* `filters/`
-  * `repo` -- a global filter that defines the file collection as a subset of the file collection
-  * `$site` -- top-level filter for a site; any `:read`: will be resolved relative to the existing
-    file
-  * Other files may contain filter fragments that are included. They can be anywhere under the
-    `filters` directory as long as they don't conflict with the name of a site. You can't have a
-    site named `repo`.
-* `site` -- a single-line file containing the name of the current site; only occurs locally
-* `sites/`
-  * `$site/` -- directory for each site
-    * `db` -- the most recent known database for a specific site
-* `pending/` -- temporary work area; never appears in the repository
-* `busy` -- a marker in the repository that changes are being made that aren't yet in the database;
-  never exists locally
+A file collection is defined by containing `.qfs` directory. There are some files that are
+synchronized between local sites and the repository, some that exist only in the repository, and
+some that exist only in local sites.
+```
+.qfs/
+
+  # Items on sites and the repository
+  filters/
+    repo -- the gloabl filter
+    $site -- the filter for the site called $site
+    ... -- other files (version control, fragments included by filters, etc.)
+  db/
+    repo -- repository database
+    $site -- site database; each site contains only its own database
+
+  # Items only on sites
+  repo -- location of the repo as s3://bucket/prefix
+  site -- contains name of current site
+  db/
+    $site.tmp -- working copy of repo's copy of site db; uploaded to repo after pull
+    repo.tmp -- pending copy of repo db; uploaded to repo after push
+  push -- diff output for most recent push; indicates push without pull; deleted by pull
+  pull -- diff output from most recent pull; kept for future reference
+
+  # Items only in the repository
+  busy -- exists while the repository is being updated, indicating db may be stale
+```
 
 qfs does not support syncing directly from one site to another. Everything goes through the
 repository. See [Fully Offline Operation](#fully-offline-operation) for a discussion of how this
@@ -429,19 +429,20 @@ could be supported if needed.
 
 ## Repository Details
 
-A repository resides in an S3 bucket. There is no concurrency protection. This is intended to be
-used by one person, one site at a time. It is not a content management or version control system.
+A repository resides in an S3 bucket. There is no strong concurrency protection. This is intended to
+be used by one person, one site at a time. It is not a content management or version control system.
 The repository stores information about the files in S3 object metadata. It also stores a repository
 database that allows qfs to obtain information about repository files from a combination of the
 output of `list-objects-v2` and the database. There is minimal locking in the form of a `busy`
 object that can be used to detect when the repository is in an inconsistent state. If a push
 operation is interrupted, the repository state can be repaired by regenerating the database from
 object metadata. The `busy` object is not sufficient to protect against race conditions from
-multiple simultaneous updaters.
+multiple simultaneous updaters, but on a human timescale, it can protect against accidental
+concurrent use or detect if an operation failed before completing.
 
 The repository contains a key for each file in the collection with the following specifics:
 * `.qfs/filters` is always included, but the rest of `.qfs` is excluded, regardless of filters
-* `.qfs/repo/db` and `.qfs/site/*/db` are copied to the repository explicitly
+* Files in `.qfs/db` are copied to the repository explicitly and do not appear in databases
 * Only files, links, and directories are represented
 * Directory keys end with `/`, and directory objects are zero-length
 * Symbolic link objects are zero-length
@@ -456,100 +457,85 @@ The repository database looks like a qfs database with the following exceptions:
 * When reading a repository database, the `uid` and `gid` values for every row are set to the
   current user and group ID.
 
-The repository database is stored under `.qfs/repo/db`. Although `.qfs/repo/db` never contains
-information about the file itself, its object metadata stores the modification time of the local
-copy on the system that most recently pushed. If necessary, it is possible to entirely reconstruct
-the database by recursively listing the prefix and reading the `qfs` metadata key. To incrementally
-build or validate the database, retrieve the database, and do a recursive listing. If any key's
-modification time matches what is stored in the database, assume it is up-to-date (since it is not
-possible to modify an S3 object without changing its modification time). This makes it easy to
-reconcile a database with the repository in the event that it should become damaged without having
-to look at all the objects again. When qfs updates the repository, it incrementally updates a local
-copy of the database and pushes it back up, so in the absence of bugs or interrupted operations, it
-should never be necessary to reconstruct the database from scratch.
+The repository and site databases is stored under `.qfs/db`. Although databases never contain
+information about themselves, their object metadata stores the modification time of the local copy
+on the system that most recently pushed. If necessary, it is possible to entirely reconstruct the
+database by recursively listing the prefix and reading the `qfs` metadata key. This can be done
+using the `init-repo` command.
 
 When qfs begins making changes to a repository that cause drift between the actual state and the
-database, it creates an object called `.qfs/busy`. When it has successfully updated the database's
-copy of `.qfs/db`, it removes `.qfs/busy`. If a push or pull operation detects the presence of
-`.qfs/busy`, it should require the user to reconcile the database first before it does anything.
+database, it creates an object called `.qfs/busy`. When it has successfully updated the repository,
+it removes `.qfs/busy`. If a push or pull operation detects the presence of `.qfs/busy`, it requires
+the user to reconcile the database first before it does anything.
 
 Many operations operate on behalf of one or more sites and the repository. The following filtering
 rules are always implied:
 * Always use the global filter.
 * Use the filters for each site. For push or pull, that means the main site's filter. For
   `-save-site`, also use the other site's filter.
-* Always include the `.qfs` directory with the additional rules:
-  * Prune the `.qfs/pending` directory
-  * Exclude `.qfs/site`, `.qfs/busy`, `.qfs/repo/config`
-* Special cases for databases:
-  * `.qfs/repo/db` appears in the repository with correct metadata and on all sites but never
-    appears in a repo or site qfs database since it will necessarily always be out of date
-  * `.qfs/sites/$site/db` will always be omitted from itself but will appear in the repository
-    database and other sites' databases.
+* In `.qfs`, `filters/` is always included, and everything else is excluded. Database files are
+  handled explicitly.
 
 ## Operations
 
 ### Note about diff
 
-Many site operations create diffs. For site operations, all diffs should be generated with
+Many site operations create diffs. For site operations, all diffs are generated with
 `-no-ownerships`, `-no-dir-times`, `-no-special`, and `-checks`.
 
 ### Initialize/Repair Repository
 
 To initialize a new repository or reconstruct the database if it becomes damaged, create the
-`.qfs/repo/config` file locally, and run `qfs init-repo`. This does the following:
-* Ensures that `.qfs/repo/db` does not exist. To re-initialize a repository, first delete that
-  object.
-* Creates `.qfs/busy` if not already present
-* Generates `.qfs/repo/db` locally by scanning the repository in S3 and uploads it to the repository
-  with correct metadata. No filters are used when scanning the repository's contents to generate its
-  database as it is assumed that the repository contains no extraneous files.
-* Removes `.qfs/busy`
+`.qfs/repo` file locally, and run `qfs init-repo`. This does the following:
+* If `.qfs/repo` exists, prompt for confirmation before regenerating the database.
+* Create `.qfs/busy` if not already present
+* Generate `.qfs/db/repo.tmp` locally by scanning the repository in S3 and uploads it to the
+  repository as `.qfs/db/repo` with correct metadata. No filters are used when scanning the
+  repository's contents to generate its database as it is assumed that the repository contains no
+  extraneous files.
+* Rename `.qfs/db/repo.tmp` to `.qfs/db/repo` locally
+* Remove `.qfs/busy` from the repository
 
 After this, it is possible to add sites and start pushing and pulling. You will need to create
 `.qfs/filters/repo` before the first push.
 
-As with regular site databases, `.qfs/repo/db` will not include itself, but the `qfs` metadata on
-`.qfs/repo/db` will reflect a modification time and mode that matches the local copy when it was
-generated. As such, when checking whether a local `.qfs/repo/db` is up-to-date, it will always be
-necessary to necessary to use `head-object`.
-
-Note that repairing a corrupted repository requires just deleting `.qfs/repo/db` from the repository
-and running `qfs init-repo` again.
-
-### Add Site
+### Add/Repair Site
 
 To set up a new site, do the following on the site:
-* Locally create `.qfs/repo/config`
+* Write the repository locaton to `.qfs/repo`
 * Write the site's name to `.qfs/site`
 * If you are recreating a site that previously existed, remove any existing `.qfs/sites/$site/db`
-  file. This will create momentary drift in the repo, but it will be resolved after the next push.
-* Run `qfs pull`. If there is no filter for the site, this will only pull the `.qfs` directory. In
-  that case, you can create a local filter and run `qfs pull` again.
+  file. This tells the repository that the site has no contents.
+* Run `qfs pull`. If there is no filter for the site, this will only pull the `.qfs/filters`
+  directory. In that case, you can create a local filter and run `qfs pull` again.
 
 Note that bad things will happen if you have two simultaneously existing sites with the same name.
 If you need to recreate a previously existing site, such as if you lose a site and want to pull its
 files down again, you should remove `.qfs/sites/$site/db` from the repository.
+
+Note that you can also recover a site by restoring the site from some other backup, running `qfs
+push-db`, and running `qfs pull`. This could be useful if you have a local backup that is faster to
+restore from than pulling everything from the repository.
 
 ### Push
 
 Run `qfs push`. This does the following:
 * If `.qfs/busy` exists in the repository, stop and tell the user to repair the database with `qfs
   init-db`.
-* Regenerate the local database as `.qfs/sites/$site/db`, applying only prune (and junk) directives
-  from the repository filter and site filters, omitting special files, and automatically handling
-  `.qfs` subject to the rules above. Using only prune entries makes the site database more useful
-  and also improves the behavior of when filters are updated after a site has been in use for a
-  while. For example, if there are files in the repository that you had locally but had not included
-  in the filter, if you subsequently add them to the filter, the next `qfs pull` operation will have
-  correct knowledge of what you already had.
+* Regenerate the local database as `.qfs/db/$site`, applying only prune (and junk) directives from
+  the repository and site filters, omitting special files, and automatically handling `.qfs` subject
+  to the rules above. Using only prune entries makes the site database more useful and also improves
+  the behavior of when filters are updated after a site has been in use for a while. For example, if
+  there are files in the repository that you had locally but had not included in the filter, if you
+  subsequently add them to the filter, the next `qfs pull` operation will have correct knowledge of
+  what you already had.
 * Diff the local site's database with the _local copy_ of the repository database. Use the site's
   filter and the repository filter with the automatic settings for the `.qfs` directory as described
   above. Using the local copy of the repository's database makes it safe to run multiple push
   operations in succession without doing an intervening pull, enabling conflict detection to work
   properly. This is discussed in more detail below.
-* Store the diff as `.qfs/pending/repo/diff`. In addition to be informational, this may be included
-  in a local tar file if requested, and it also indicates that a push has been done without a pull.
+* Store the diff as `.qfs/push`. In addition to be informational, this may be included in a local
+  tar file if requested, and it also indicates that a push has been done without a pull.
 * Create a working repository database by loading the repository's copy of its database into memory.
   If the metadata on the repository database matches the local copy, load the local copy.
 * Perform conflict checking
@@ -558,23 +544,20 @@ Run `qfs push`. This does the following:
   * If conflicts are found, offer to abort or override.
 * If `-n` was given, stop
 * If `-local` was given
-  * Create a tar file whose first entry is `.qfs/pending/repo/diff` and which subsequently contains
-    the files that would be pushed
+  * Create a tar file whose first entries are `.qfs/push` and `.qfs/db/$site` and which subsequently
+    contains the files that would be pushed
 * Otherwise, update the repository:
   * Create `.qfs/busy` on the repository
   * Apply changes by processing the diff. All changes are made to the repository. Ideally, changes
-    would be made to the working database, but this turns out to be impractical.
+    would be made to the working database, but this turns out to be impractical because of issues
+    with S3 timestamp granularity. See notes.
     * Recursively remove anything marked `rm` from s3
-    * For each added or changed file, upload a new version with appropriate metadata. The original
-      hope was that, once uploaded, we would do an immediate head-object (S3 has strong
-      read-after-write consistency) so the in-memory database update can include the object's
-      modification time. The problem is that head-object returns second-granularity timestamps,
-      while list-objects-v2 returns millisecond granularity, so instead, we will have to re-traverse
-      using the working repository database as a cache.
-  * Regenerate the repository database, writing locally to `.qfs/pending/repo/db`
-  * Upload `.qfs/pending/repo/db` to `.qfs/repo/db` with correct metadata
-  * Upload `.qfs/sites/$site/db` with correct metadata
-  * Move `.qfs/pending/repo/db` to `.qfs/repo/db` locally
+    * For each added or changed file, including metadata changes, upload a new version with
+      appropriate metadata.
+  * Regenerate the repository database, writing locally to `.qfs/db/repo.tmp`
+  * Upload `.qfs/db/repo.tmp` to `.qfs/db/repo` with correct metadata
+  * Upload `.qfs/db/$site` with correct metadata
+  * Move `.qfs/db/repo.tmp` to `.qfs/db/repo` locally
   * Delete `.qfs/busy` from the repository
   * If `-save-site` was given
     * Diff the site database with the _local copy_ of the other site's database, applying the global
@@ -634,26 +617,31 @@ Run `qfs pull`. This does the following:
       * From bottom to top, process any chmod operations. For directories, in priority order, use the
         value from an explicit chmod or the value in the tar header.
 * Continue from here if `-n` was given.
-* Download the repository's copy of its own database to `.qfs/pending/repo/db`
+* Download the repository's copy of its own database to `.qfs/db/repo.tmp`
 * Read the repository's copy of the current site's database into memory, and diff it against the
   repository's copy of its own database (which we just downloaded) using the repository's copies of
   the global filter and the site's filter. For bootstrapping to work:
   * If the repository doesn't have a copy of the site's database, treat it as empty.
   * If the repository doesn't have a copy of the site's filter, check locally. If there is no local
     filter either, then treat the filter as one that excludes everything, which means only the
-    `.qfs` directory will be included.
+    `.qfs/filters` directory will be included. This behavior is for bootstrapping.
 * Perform conflict checking. Note that if files were extracted from the tar file, most of the local
   files will already have their desired end states.
 * If `-n` was given, stop.
 * If there were any conflicts, offer to abort or override.
-* Apply changes by downloading from the repository using the same steps as above. A key point here
-  is that, if a site tar was used, many (or even all) of the differences will already have been
-  applied. There may be changes pushed from other sites (or even the same remote site) that also
-  need to be applied, though pushing from one site with a site tar and then pushing from the same
-  site without a site-tar is likely to result in false positives with conflict checking.
-* Store updated site database in repo (XXX update above to describe modifications to working db)
-* Move `.qfs/pending/repo/db` to `.qfs/repo/db`
-* Recursively remove `.qfs/repo/pending`, which may include files from the previous push.
+* Apply changes by downloading from the repository using the same steps as above. Keep the local
+  (in-memory) copy of the repository's copy of the site's database in sync so that it is updated
+  with only the changes that were pulled.
+  * A key point here is that, if a site tar was used, many (or even all) of the differences will
+    already have been applied. There may be changes pushed from other sites (or even the same remote
+    site) that also need to be applied, though pushing from one site with a site tar and then
+    pushing from the same site without a site-tar is likely to result in false positives with
+    conflict checking.
+* Write the updated repository's site database to `.qfs/db/$site.tmp` and uploaded it to the
+  repository as `.qfs/db/$site`. This makes it safe to do multiple pulls on a site without doing any
+  intervening pushes.
+* Move `.qfs/db/repo.tmp` to `.qfs/db/repo`
+* Remove `.qfs/push`. We leave `.qfs/pull` and `.qfs/db/$site.tmp` in place for future reference.
 
 ### Working with individual files
 
@@ -664,13 +652,6 @@ for every file much as would be the case with something like Dropbox.
 There is facility for manually pushing a single file to a repository. This would be hard to do while
 keeping databases in sync and avoiding drift. If things need to be restored, fix the files locally
 and then run a push.
-
-### Manual Recovery
-
-If things get out of sync locally and you want to resync from the repository, you can use `push -n`
-to generate an updated local database and manually copy that to the respository, then do a pull.
-
-XXX Test this and make sure it works.
 
 ## Conflict Detection
 
@@ -718,9 +699,11 @@ The above could be achieved with Dropbox or rsync. What qfs enables is something
 * Go to home system
 * `qfs pull` -- this retrieves changes made on work system
 
-Note that the presence of the `.qfs/pending/repo/diff` file indicates that you have done a push
-without doing a pull. If you are starting a work session on that site as your primary, you should
-ways do a pull to have the latest files. Under steady state, all but one site would have this file.
+Note that the presence of the `.qfs/push` file indicates that you have done a push without doing a
+pull. If you are starting a work session on that site as your primary, you should generally do a
+pull to have the latest files, though `qfs` makes it safe to do multiple pulls without intervening
+pushes, we can be useful in rare situation when working on more than one system at a time or if you
+forgot to do a push from another system. Under steady state, all but one site would have this file.
 The one that doesn't have it is the active site. It's possible to push from the active site and then
 switch to any other site without having to know in advance which one it is going to be. If you do
 know which site you're going to, you can use the `-save-site` option to send the files locally and
@@ -821,8 +804,8 @@ perhaps by having a special value, such as `offline` as the content of `.qfs/rep
 
 * Initialize the repository
   ```
-  mkdir -p .qfs/repo
-  echo s3://bucket/prefix > .qfs/repo/config
+  mkdir .qfs
+  echo s3://bucket/prefix > .qfs/repo
   qfs init-repo
   ```
 * Create the repo filter in `.qfs/filters/repo`
@@ -842,6 +825,20 @@ local repository.
 For `push` and `pull`, all prompts are structured so that `y` is the safe answer. That helps protect
 against muscle-memory `y` responses to abnormal situations such as conflicts.
 
+The `pull` operation modifies an in-memory copy of the site's database as last known by the
+repository and pushes it back to the site. The file then represents the repository's concept of the
+site's contents, which includes changes just pulled but not other changes that haven't yet been
+pushed. This makes a subsequent pull not include the files that were just pulled without causing it
+to revert local changes that haven't been pushed.
+
+The original hope was that `push` could incrementally update its local copy of the repository's
+database and push that back, but this turns out to be impractical. When you do a `put-object` in S3,
+the only way to get the object's granular timestamp is to do a `list-objects-v2` on the
+just-uploaded object since `put-object` doesn't return the timestamp, and `head-object` returns it
+with second-granularity instead of millisecond-granularity. It's not that efficient to call
+`list-objects-v2` on lots of individual keys, so instead, we just re-traverse to update the
+database. That traversal is done with the old database as a reference, so `head-object` is only
+called on newly created files.
 
 # Comparison with qsync
 
