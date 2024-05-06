@@ -4,8 +4,17 @@ Last full review: 2024-05-04
 
 # XXX work in
 
+* XXX test
+  - change 1 site 1
+  - change 2 site 2
+  - push 1 (change 1)
+  - pull 1 (no difference)
+  - pull 2 (change 1)
+  - pull 2 (no difference)
+  - push 2 (change 2)
+  - pull 1 (change 2)
+
 * For all prompts, the default action should be safe (document)
-* After pull, upload incrementally updated site db
 * Add `push-db` to regenerate and push the site's db to the repo
 * Maybe site tar is overkill for now
 * Directory structure change
@@ -573,6 +582,7 @@ Run `qfs pull`. This does the following:
   applied. There may be changes pushed from other sites (or even the same remote site) that also
   need to be applied, though pushing from one site with a site tar and then pushing from the same
   site without a site-tar is likely to result in false positives with conflict checking.
+* Store updated site database in repo (XXX update above to describe modifications to working db)
 * Move `.qfs/pending/repo/db` to `.qfs/repo/db`
 * Recursively remove `.qfs/repo/pending`, which may include files from the previous push.
 

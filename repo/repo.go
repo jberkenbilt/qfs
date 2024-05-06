@@ -167,7 +167,7 @@ func (r *Repo) Init() error {
 		return err
 	}
 	if isInitialized {
-		if misc.Prompt("Repository is already initialized. Exit?") {
+		if !misc.Prompt("Repository is already initialized. Rebuild database?") {
 			return fmt.Errorf(
 				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
 				r.bucket,
@@ -665,9 +665,22 @@ func (r *Repo) Pull(config *PullConfig) error {
 		return nil
 	}
 
-	err = r.applyChangesFromRepo(src, diffResult)
-	if err != nil {
-		return err
+	if changes {
+		err = r.applyChangesFromRepo(src, diffResult, siteDb)
+		if err != nil {
+			return err
+		}
+		// Push a modified copy of the site database
+		localSiteFile := r.localPath(repofiles.TempSiteDb(site))
+		err = database.WriteDb(localSiteFile.Path(), siteDb, database.DbQfs)
+		if err != nil {
+			return err
+		}
+		err = src.Store(localSiteFile, repofiles.SiteDb(site))
+		if err != nil {
+			return fmt.Errorf("update site database in repository: %w", err)
+		}
+		msg("updated repository copy of site database to reflect changes    ")
 	}
 
 	if downloadedRepoDb {
@@ -679,15 +692,20 @@ func (r *Repo) Pull(config *PullConfig) error {
 			return err
 		}
 	}
+
 	err = r.localPath(repofiles.Push).Remove()
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 
 	return nil
 }
 
-func (r *Repo) applyChangesFromRepo(src *s3source.S3Source, diffResult *diff.Result) error {
+func (r *Repo) applyChangesFromRepo(
+	src *s3source.S3Source,
+	diffResult *diff.Result,
+	localDb database.Memory,
+) error {
 	// Apply changes. Possible enhancement: make sure every directory we have to
 	// modify (by adding or removing files) is writable first, and if we change it,
 	// change it back. For now, if we try to modify a read-only directory, it will be
@@ -703,6 +721,7 @@ func (r *Repo) applyChangesFromRepo(src *s3source.S3Source, diffResult *diff.Res
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
+		delete(localDb, rm)
 	}
 
 	// Make sure files we are changing will be writable. We will set the correct
@@ -738,6 +757,7 @@ func (r *Repo) applyChangesFromRepo(src *s3source.S3Source, diffResult *diff.Res
 				if downloaded {
 					msg("downloaded %s", info.Path)
 				}
+				localDb[info.Path] = info
 			}
 		},
 		func(e error) {
@@ -759,6 +779,7 @@ func (r *Repo) applyChangesFromRepo(src *s3source.S3Source, diffResult *diff.Res
 		if err != nil {
 			return fmt.Errorf("chmod %04o %s: %w", *m.Permissions, path, err)
 		}
+		localDb[m.Info.Path] = m.Info
 	}
 	return nil
 }
