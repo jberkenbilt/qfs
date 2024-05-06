@@ -50,11 +50,6 @@ const numWorkers = 10
 
 var s3Re = regexp.MustCompile(`^s3://([^/]+)/(.*)\n?$`)
 var ctx = context.Background()
-var progName = filepath.Base(os.Args[0])
-
-func msg(format string, args ...any) {
-	fmt.Printf("%s: %s\n", progName, fmt.Sprintf(format, args...))
-}
 
 func New(options ...Options) (*Repo, error) {
 	r := &Repo{}
@@ -215,7 +210,7 @@ func (r *Repo) traverseAndStore() error {
 	if err != nil {
 		return err
 	}
-	msg("uploading repository database")
+	misc.Message("uploading repository database")
 	err = src.Store(tmpDb, repofiles.RepoDb())
 	if err != nil {
 		return err
@@ -263,7 +258,7 @@ func checkConflicts(
 		}
 	}
 	if conflicts && allowOverride && !misc.Prompt("Conflicts detected. Exit?") {
-		msg("overriding conflicts")
+		misc.Message("overriding conflicts")
 		conflicts = false
 	}
 	if conflicts {
@@ -328,7 +323,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	msg("generating local database")
+	misc.Message("generating local database")
 	localFiles, err := tr.Traverse(nil, nil)
 	if err != nil {
 		return err
@@ -383,20 +378,20 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	msg("no conflicts found")
+	misc.Message("no conflicts found")
 
 	// XXX Remember LocalTar, LocalSite, SaveSiteTar
 
 	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
 	if changes {
-		msg("----- changes to push -----")
+		misc.Message("----- changes to push -----")
 		_ = diffResult.WriteDiff(os.Stdout, false)
-		msg("-----")
+		misc.Message("-----")
 		if !config.NoOp && !misc.Prompt("Continue?") {
 			return fmt.Errorf("exiting")
 		}
 	} else {
-		msg("no changes to push")
+		misc.Message("no changes to push")
 	}
 
 	if config.NoOp {
@@ -437,7 +432,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	} else {
 		if downloadedRepoDb {
 			// Our local copy was outdated, so update it.
-			msg("updating local copy of repository database")
+			misc.Message("updating local copy of repository database")
 			err = os.Rename(
 				r.localPath(repofiles.TempRepoDb()).Path(),
 				r.localPath(repofiles.RepoDb()).Path(),
@@ -449,7 +444,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 
 	// Store the site's database in the repository
-	msg("uploading site database")
+	misc.Message("uploading site database")
 	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
 	if err != nil {
 		return err
@@ -474,7 +469,7 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 		}
 		var objects []types.ObjectIdentifier
 		for _, p := range batch {
-			msg("removing %s", p)
+			misc.Message("removing %s", p)
 			objects = append(objects, types.ObjectIdentifier{
 				Key: aws.String(filepath.Join(r.prefix, p)),
 			})
@@ -511,7 +506,7 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 	misc.DoConcurrently(
 		func(c chan *fileinfo.FileInfo, errorChan chan error) {
 			for f := range c {
-				msg("storing %s", f.Path)
+				misc.Message("storing %s", f.Path)
 				err := src.Store(r.localPath(f.Path), f.Path)
 				if err != nil {
 					errorChan <- err
@@ -571,12 +566,12 @@ func (r *Repo) Pull(config *PullConfig) error {
 	var siteDb database.Memory
 	var nsk *types.NoSuchKey
 	if errors.As(err, &nsk) {
-		msg("repository doesn't contain a database for this site")
+		misc.Message("repository doesn't contain a database for this site")
 		siteDb = database.Memory{}
 	} else if err != nil {
 		return err
 	} else {
-		msg("loading site database from repository")
+		misc.Message("loading site database from repository")
 		defer func() { _ = files.Close() }()
 		siteDb, err = database.Load(files)
 		if err != nil {
@@ -598,11 +593,11 @@ func (r *Repo) Pull(config *PullConfig) error {
 	siteFilter := filter.New()
 	err = siteFilter.ReadFile(siteFilterPath, false)
 	if errors.As(err, &nsk) {
-		msg("site filter does not exist on the repository; trying locally")
+		misc.Message("site filter does not exist on the repository; trying locally")
 		siteFilterPath = r.localPath(repofiles.SiteFilter(site))
 		err = siteFilter.ReadFile(siteFilterPath, false)
 		if errors.Is(err, fs.ErrNotExist) {
-			msg("no filter is configured for this site; bootstrapping with exclude all")
+			misc.Message("no filter is configured for this site; bootstrapping with exclude all")
 			siteFilter.SetDefaultInclude(false)
 		} else if err != nil {
 			return fmt.Errorf("reading local copy of site filter: %w", err)
@@ -651,14 +646,14 @@ func (r *Repo) Pull(config *PullConfig) error {
 
 	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
 	if changes {
-		msg("----- changes to pull -----")
+		misc.Message("----- changes to pull -----")
 		_ = diffResult.WriteDiff(os.Stdout, false)
-		msg("-----")
+		misc.Message("-----")
 		if !config.NoOp && !misc.Prompt("Continue?") {
 			return fmt.Errorf("exiting")
 		}
 	} else {
-		msg("no changes to pull")
+		misc.Message("no changes to pull")
 	}
 
 	if config.NoOp {
@@ -680,7 +675,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		if err != nil {
 			return fmt.Errorf("update site database in repository: %w", err)
 		}
-		msg("updated repository copy of site database to reflect changes    ")
+		misc.Message("updated repository copy of site database to reflect changes    ")
 	}
 
 	if downloadedRepoDb {
@@ -717,7 +712,7 @@ func (r *Repo) applyChangesFromRepo(
 	// files.
 	for _, rm := range diffResult.Rm {
 		path := r.localPath(rm).Path()
-		msg("removing %s", path)
+		misc.Message("removing %s", path)
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
@@ -755,7 +750,7 @@ func (r *Repo) applyChangesFromRepo(
 					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)
 				}
 				if downloaded {
-					msg("downloaded %s", info.Path)
+					misc.Message("downloaded %s", info.Path)
 				}
 				localDb[info.Path] = info
 			}
@@ -774,7 +769,7 @@ func (r *Repo) applyChangesFromRepo(
 			continue
 		}
 		path := r.localPath(m.Info.Path).Path()
-		msg("chmod %04o %s", *m.Permissions, m.Info.Path)
+		misc.Message("chmod %04o %s", *m.Permissions, m.Info.Path)
 		err := os.Chmod(path, os.FileMode(*m.Permissions))
 		if err != nil {
 			return fmt.Errorf("chmod %04o %s: %w", *m.Permissions, path, err)
@@ -797,12 +792,12 @@ func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
 		return false, nil, err
 	}
 	if !requiresCopy {
-		msg("local copy of repository database is current")
+		misc.Message("local copy of repository database is current")
 		toLoad = localPath
 	}
 	downloaded := false
 	if toLoad == nil {
-		msg("downloading latest repository database")
+		misc.Message("downloading latest repository database")
 		downloaded = true
 		pending := r.localPath(repofiles.TempRepoDb())
 		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())

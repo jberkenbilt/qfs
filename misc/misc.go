@@ -2,8 +2,15 @@ package misc
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 )
+
+var progName = filepath.Base(os.Args[0])
+
+var TestMessageChannel chan<- string // If defined, Message writes to this channel
+var TestPromptChannel <-chan string  // If defined, Prompt reads from this channel
 
 // DoConcurrently is a simple worker pool implementation. It starts up numWorkers
 // goroutines and, in each, calls `work(c, errorChan)`. Any errors that `work`
@@ -40,6 +47,21 @@ func DoConcurrently[T any, errorT any](
 func Prompt(prompt string) bool {
 	fmt.Printf("%s [y/n] ", prompt)
 	var answer string
-	_, _ = fmt.Scanln(&answer)
+	if TestPromptChannel != nil {
+		fmt.Println("")
+		answer = <-TestPromptChannel
+	} else {
+		_, _ = fmt.Scanln(&answer)
+	}
 	return answer == "y"
+}
+
+// Message prepends the program name and appends a newline to whatever message is
+// passed in, then writes it standard output.
+func Message(format string, args ...any) {
+	if TestMessageChannel != nil {
+		TestMessageChannel <- fmt.Sprintf(format, args...)
+	} else {
+		fmt.Printf("%s: %s\n", progName, fmt.Sprintf(format, args...))
+	}
 }

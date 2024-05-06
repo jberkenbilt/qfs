@@ -4,17 +4,86 @@ Last full review: 2024-05-04
 
 # XXX work in
 
-* XXX test
-  - change 1 site 1
-  - change 2 site 2
-  - push 1 (change 1)
-  - pull 1 (no difference)
-  - pull 2 (change 1)
-  - pull 2 (no difference)
-  - push 2 (change 2)
-  - pull 1 (change 2)
+* Lifecycle tests
+  * remember to check contents of `push` and `pull` files at least once
+  * bootstrap
+    * create site1
+    * init-repo
+    * initial push
+    * second push (no changes)
+    * pull (no changes)
+    * create site2 with no filter defined
+    * pull
+    * create filter locally with some things not in site1's filter
+    * pull
+    * pull again (no changes)
+    * push (get new things)
+    * pull (no changes)
+    * pull again (no changes)
+  * changes
+    * change a file in site1
+    * change a different files in site2
+      * modify a file without changing permissions
+      * modify a file and change permissions
+      * modify a read-only file
+      * change a symlink
+      * replace a file with a directory
+      * replace a directory with a file
+      * replace a file with a link
+      * replace a link with a file
+      * replace a directory with a link
+      * replace a link with a directory
+      * change a file's permissions
+      * change a directory's permissions
+      * remove a file
+      * remove a directory
+      * remove a link
+      * create a file
+      * create a directory
+      * create a link
+    * push site2 -n
+    * push site2
+    * pull site1 -n (should not see site1 change)
+    * push site1 -n (should only see site1 change)
+    * pull
+    * pull (no changes)
+    * push
+    * site2
+    * push -n (no changes)
+    * pull (get change from site1)
+    * push (no changes)
+  * conflicts
+    * site1 change file1 and file2
+    * site2 change file1, replace file2 with directory
+    * site2 push -n (no conflicts)
+    * site1 push -n (no conflicts)
+    * site1 push
+    * site2 pull -n (conflicts)
+    * site2 push -n (conflicts)
+    * site2 push (override)
+    * site1 pull (take changes from site2)
+    * site1 pull (no changes)
+    * site2 pull (no changes)
+  * exclude something in repo filter, run `clean-repo`, and watch it disappear
+  * recreate site
+    * delete site2 except .qfs/{repo,site}
+    * delete site2 db in repo
+    * pull -- should fully reconstruct site
+  * revert
+    * make change on site1
+    * pull (no changes)
+    * `push-db`
+    * pull (revert change)
+  * regenerate db
+    * delete object in repo
+    * push (no changes)
+    * init-db with regeneration
+    * push -n (restore deleted file)
+    * pull -n (delete local file)
+    * push (restore file)
+    * pull (no changes)
 
-* For all prompts, the default action should be safe (document)
+* Add `clean-repo` to remove files that are not matched by the repo filter
 * Add `push-db` to regenerate and push the site's db to the repo
 * Maybe site tar is overkill for now
 * Directory structure change
@@ -769,6 +838,10 @@ perhaps by having a special value, such as `offline` as the content of `.qfs/rep
 
 Use [Minio](https://min.io) for testing or to create a local S3 API-compatible storage area for a
 local repository.
+
+For `push` and `pull`, all prompts are structured so that `y` is the safe answer. That helps protect
+against muscle-memory `y` responses to abnormal situations such as conflicts.
+
 
 # Comparison with qsync
 
