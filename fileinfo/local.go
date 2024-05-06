@@ -23,10 +23,6 @@ func (ls *LocalSource) FullPath(path string) string {
 	return filepath.Join(ls.top, path)
 }
 
-func (ls *LocalSource) Readlink(path string) (string, error) {
-	return os.Readlink(ls.FullPath(path))
-}
-
 func (ls *LocalSource) DirEntries(path string) ([]DirEntry, error) {
 	entries, err := os.ReadDir(ls.FullPath(path))
 	if err != nil {

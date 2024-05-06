@@ -167,7 +167,7 @@ func (r *Repo) Init() error {
 		return err
 	}
 	if isInitialized {
-		if !misc.Prompt("Repository is already initialized; regenerate database?") {
+		if misc.Prompt("Repository is already initialized. Exit?") {
 			return fmt.Errorf(
 				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
 				r.bucket,
@@ -210,7 +210,7 @@ func (r *Repo) traverseAndStore() error {
 		return err
 	}
 	defer func() { _ = files.Close() }()
-	tmpDb := r.localPath(repofiles.PendingDb(repofiles.RepoSite))
+	tmpDb := r.localPath(repofiles.TempRepoDb())
 	err = database.WriteDb(tmpDb.Path(), files, database.DbRepo)
 	if err != nil {
 		return err
@@ -262,7 +262,8 @@ func checkConflicts(
 			}
 		}
 	}
-	if conflicts && allowOverride && misc.Prompt("Conflicts detected. Override?") {
+	if conflicts && allowOverride && !misc.Prompt("Conflicts detected. Exit?") {
+		msg("overriding conflicts")
 		conflicts = false
 	}
 	if conflicts {
@@ -291,7 +292,10 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 	// Open the local copy of the repo database early
-	localRepoFiles, err := database.Open(r.localPath(repofiles.RepoDb()), database.WithRepoRules(true))
+	localRepoFiles, err := database.Open(
+		r.localPath(repofiles.RepoDb()),
+		database.WithRepoRules(true),
+	)
 	if err != nil {
 		return err
 	}
@@ -357,24 +361,14 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 
 	if !config.NoOp {
-		if err := os.MkdirAll(r.localPath(repofiles.PendingDir(repofiles.RepoSite)).Path(), 0777); err != nil {
-			return err
-		}
-		f, err := os.Create(r.localPath(repofiles.PendingDiff(repofiles.RepoSite)).Path())
+		// Write diff to a local file as a marker that a push has been run.
+		err = r.SaveDiff(repofiles.Push, diffResult)
 		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		err = diffResult.WriteDiff(f, true)
-		if err != nil {
-			return err
-		}
-		if err = f.Close(); err != nil {
 			return err
 		}
 	}
 
-	downloaded, remoteRepoDb, err := r.loadRepoDb()
+	downloadedRepoDb, remoteRepoDb, err := r.loadRepoDb()
 	if err != nil {
 		return err
 	}
@@ -389,12 +383,25 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	if config.NoOp {
-		msg("no conflicts found")
-		return nil
-	}
+	msg("no conflicts found")
 
 	// XXX Remember LocalTar, LocalSite, SaveSiteTar
+
+	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
+	if changes {
+		msg("----- changes to push -----")
+		_ = diffResult.WriteDiff(os.Stdout, false)
+		msg("-----")
+		if !config.NoOp && !misc.Prompt("Continue?") {
+			return fmt.Errorf("exiting")
+		}
+	} else {
+		msg("no changes to push")
+	}
+
+	if config.NoOp {
+		return nil
+	}
 
 	// Apply changes to the repository.
 	err = r.createBusy()
@@ -402,6 +409,59 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
+	// Upload added and changed files.
+	src, err := s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+		s3source.WithDatabase(remoteRepoDb),
+	)
+	if err != nil {
+		return err
+	}
+
+	if changes {
+		err = r.pushChangesToRepo(src, diffResult)
+		if err != nil {
+			return err
+		}
+		// Update the repository database. It would be nice if we could update our
+		// working copy and push it up to avoid the extra traversal, but as of 2024-05,
+		// this is not possible since ListObjectsV2 is the only way to get the
+		// millisecond granularity S3 timestamps that we need for the repository
+		// database.
+		err = r.traverseAndStore()
+		if err != nil {
+			return err
+		}
+	} else {
+		if downloadedRepoDb {
+			// Our local copy was outdated, so update it.
+			msg("updating local copy of repository database")
+			err = os.Rename(
+				r.localPath(repofiles.TempRepoDb()).Path(),
+				r.localPath(repofiles.RepoDb()).Path(),
+			)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Store the site's database in the repository
+	msg("uploading site database")
+	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
+	if err != nil {
+		return err
+	}
+	err = r.removeBusy()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result) error {
 	// Delete what needs to be deleted.
 	toDelete := diffResult.Rm
 	for len(toDelete) > 0 {
@@ -426,21 +486,10 @@ func (r *Repo) Push(config *PushConfig) error {
 			Bucket: &r.bucket,
 			Delete: &deleteBatch,
 		}
-		_, err = r.s3Client.DeleteObjects(ctx, deleteInput)
+		_, err := r.s3Client.DeleteObjects(ctx, deleteInput)
 		if err != nil {
 			return fmt.Errorf("delete keys: %w", err)
 		}
-	}
-
-	// Upload added and changed files.
-	src, err := s3source.New(
-		r.bucket,
-		r.prefix,
-		s3source.WithS3Client(r.s3Client),
-		s3source.WithDatabase(remoteRepoDb),
-	)
-	if err != nil {
-		return err
 	}
 
 	c := make(chan *fileinfo.FileInfo, numWorkers)
@@ -463,7 +512,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		func(c chan *fileinfo.FileInfo, errorChan chan error) {
 			for f := range c {
 				msg("storing %s", f.Path)
-				err = src.Store(r.localPath(f.Path), f.Path)
+				err := src.Store(r.localPath(f.Path), f.Path)
 				if err != nil {
 					errorChan <- err
 				}
@@ -479,38 +528,20 @@ func (r *Repo) Push(config *PushConfig) error {
 		return errors.Join(allErrors...)
 	}
 
-	// If we made any changes, update the repo database. Otherwise, update our local copy if needed.
-	if len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) == 0 {
-		// No changes
-		if downloaded {
-			// Our local copy was outdated, so update it.
-			msg("updating local copy of repository database")
-			err = os.Rename(
-				r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path(),
-				r.localPath(repofiles.RepoDb()).Path(),
-			)
-			if err != nil {
-				return err
-			}
-		} else {
-			msg("no changes required to repository database")
-		}
-	} else {
-		err = r.traverseAndStore()
-		if err != nil {
-			return err
-		}
-	}
+	return nil
+}
 
-	// Store the site's database in the repository
-	msg("uploading site database")
-	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
+func (r *Repo) SaveDiff(path string, diffResult *diff.Result) error {
+	f, err := os.Create(r.localPath(path).Path())
 	if err != nil {
 		return err
 	}
-
-	err = r.removeBusy()
+	defer func() { _ = f.Close() }()
+	err = diffResult.WriteDiff(f, true)
 	if err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
 		return err
 	}
 	return nil
@@ -592,6 +623,14 @@ func (r *Repo) Pull(config *PullConfig) error {
 		return err
 	}
 
+	if !config.NoOp {
+		// Write diff to a local file for reference.
+		err = r.SaveDiff(repofiles.Pull, diffResult)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Check conflicts
 	localSrc := fileinfo.NewLocal(r.localTop)
 	err = checkConflicts(diffResult.Check, !config.NoOp, func(path string) (*fileinfo.FileInfo, error) {
@@ -610,6 +649,45 @@ func (r *Repo) Pull(config *PullConfig) error {
 
 	// XXX site tar
 
+	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
+	if changes {
+		msg("----- changes to pull -----")
+		_ = diffResult.WriteDiff(os.Stdout, false)
+		msg("-----")
+		if !config.NoOp && !misc.Prompt("Continue?") {
+			return fmt.Errorf("exiting")
+		}
+	} else {
+		msg("no changes to pull")
+	}
+
+	if config.NoOp {
+		return nil
+	}
+
+	err = r.applyChangesFromRepo(src, diffResult)
+	if err != nil {
+		return err
+	}
+
+	if downloadedRepoDb {
+		err = os.Rename(
+			r.localPath(repofiles.TempRepoDb()).Path(),
+			r.localPath(repofiles.RepoDb()).Path(),
+		)
+		if err != nil {
+			return err
+		}
+	}
+	err = r.localPath(repofiles.Push).Remove()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Repo) applyChangesFromRepo(src *s3source.S3Source, diffResult *diff.Result) error {
 	// Apply changes. Possible enhancement: make sure every directory we have to
 	// modify (by adding or removing files) is writable first, and if we change it,
 	// change it back. For now, if we try to modify a read-only directory, it will be
@@ -631,7 +709,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	// permissions when we replace them.
 	for _, ch := range diffResult.Change {
 		path := r.localPath(ch.Path)
-		err = os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
+		err := os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
 		if err != nil {
 			return fmt.Errorf("%s: make writable: %w", path.Path(), err)
 		}
@@ -677,26 +755,11 @@ func (r *Repo) Pull(config *PullConfig) error {
 		}
 		path := r.localPath(m.Info.Path).Path()
 		msg("chmod %04o %s", *m.Permissions, m.Info.Path)
-		err = os.Chmod(path, os.FileMode(*m.Permissions))
+		err := os.Chmod(path, os.FileMode(*m.Permissions))
 		if err != nil {
 			return fmt.Errorf("chmod %04o %s: %w", *m.Permissions, path, err)
 		}
 	}
-
-	if downloadedRepoDb {
-		err = os.Rename(
-			r.localPath(repofiles.PendingDb(repofiles.RepoSite)).Path(),
-			r.localPath(repofiles.RepoDb()).Path(),
-		)
-		if err != nil {
-			return err
-		}
-	}
-	err = os.RemoveAll(r.localPath(repofiles.PendingDir(repofiles.RepoSite)).Path())
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -720,7 +783,7 @@ func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
 	if toLoad == nil {
 		msg("downloading latest repository database")
 		downloaded = true
-		pending := r.localPath(repofiles.PendingDb(repofiles.RepoSite))
+		pending := r.localPath(repofiles.TempRepoDb())
 		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
 		if err != nil {
 			return false, nil, err

@@ -401,6 +401,9 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 		return false, err
 	}
 	err = os.Chmod(localPath, fs.FileMode(srcInfo.Permissions|0o600))
+	if err != nil {
+		return false, err
+	}
 	f, err := os.Create(localPath)
 	if err != nil {
 		return false, err

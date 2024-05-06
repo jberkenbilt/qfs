@@ -2,6 +2,39 @@
 
 Last full review: 2024-05-04
 
+# XXX work in
+
+* For all prompts, the default action should be safe (document)
+* After pull, upload incrementally updated site db
+* Add `push-db` to regenerate and push the site's db to the repo
+* Maybe site tar is overkill for now
+* Directory structure change
+
+```
+.qfs/
+  filters/
+  db/
+    $site
+    repo
+
+local only
+.qfs/
+  site -- name of site
+  repo -- repo config
+  db/
+    $site.tmp -- working copy of repo's copy of site db
+    repo.tmp -- pending copy of repo db
+  push -- diff output for most recent push; indicates push without pull; deleted by pull
+  pull -- diff output from most recent pull; kept for future reference
+
+repo only
+
+./qfs/
+  busy
+```
+
+----------
+
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
 the local file system. The state includes the output of _lstat_ on the directory and all its
 contents. `qfs` includes the following capabilities:

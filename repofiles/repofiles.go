@@ -4,34 +4,27 @@ const (
 	RepoSite   = "repo"
 	Top        = ".qfs"
 	Filters    = ".qfs/filters"
-	RepoConfig = ".qfs/repo/config"
-	Pending    = ".qfs/pending"
-	Busy       = ".qfs/busy"
+	RepoConfig = ".qfs/repo"
 	Site       = ".qfs/site"
+	Busy       = ".qfs/busy"
+	Push       = ".qfs/push"
+	Pull       = ".qfs/pull"
 )
 
-func PendingDir(site string) string {
-	return Pending + "/" + site
-}
-
-func PendingDb(site string) string {
-	return PendingDir(site) + "/db"
-}
-
-func PendingDiff(site string) string {
-	return PendingDir(site) + "/diff"
-}
-
 func SiteDb(site string) string {
-	if site == RepoSite {
-		return ".qfs/repo/db"
-	} else {
-		return ".qfs/sites/" + site + "/db"
-	}
+	return ".qfs/db/" + site
 }
 
 func RepoDb() string {
 	return SiteDb(RepoSite)
+}
+
+func TempSiteDb(site string) string {
+	return ".qfs/db/" + site + ".tmp"
+}
+
+func TempRepoDb() string {
+	return TempSiteDb(RepoSite)
 }
 
 func SiteFilter(site string) string {
