@@ -4,6 +4,73 @@ Last full review: 2024-05-06
 
 # XXX work in
 
+Refactor
+* Work on the push/pull lifecycle tests first so we don't have to keep retesting
+* Change database.Memory to maybe fileinfo.Database
+* Scanner interface with Scan() that returns fileinfo.Database
+  * File system implements existing traverse
+  * S3 implements ~/source/s3-list-bucket/
+  * Database reads the database
+* RepoDb doesn't need s3 timestamp. When listing the bucket, if there are conflicts, delete all but
+  the one with the most recent timestamp.
+* Keep the local copy of the repo db in sync incrementally as originally planned.
+* Repo structure
+  prefix/
+    .@d,modtime,permissions -- only for root
+    some/path@[fld],modtime,[permissions|target]
+
+  So if you have
+    login/
+      config/
+        env
+      file
+      link -> file
+
+  You would get
+    login/.@d,modtime,permissions
+    login/config@d,modtime,permissions
+    login/config/env@f,modtime,permissions
+    login/file@f,modtime,permissions
+    login/link@l,modtime,target
+
+  To get versions, do list-object-versions on path@ (including .@) and sort by descending s3
+  timestamp across differing keys including delete markers. If a delete marker and a non-deleted
+  version have the same timestamp, favor the new version. Ignore anything whose key doesn't match
+  after truncating everything after the last @. (Be sure to test with something with @ in the file
+  name.) Only one should actually exist, meaning the latest of all except the newest item should be
+  deleted. In other words, IsLatest is only allowed be true for a Version (rather than a
+  DeleteMarker; indicated by '*' below) for the newest item. Otherwise, the item should be deleted.
+
+```
+#!/usr/bin/env python3
+import json
+from operator import itemgetter
+
+with open('/tmp/a.json', 'r') as f:
+    data = json.loads(f.read())
+
+all = []
+
+for i in data['Versions']:
+    all.append([
+        [i['LastModified'], 1],
+        i['Key'],
+        i['VersionId'],
+        '*' if i['IsLatest'] else '',
+    ])
+for i in data['DeleteMarkers']:
+    all.append([
+        [i['LastModified'], 0],
+        i['Key'],
+        i['VersionId'],
+        '',
+    ])
+
+all.sort(key=itemgetter(0), reverse=True)
+for i in all:
+    print(i)
+```
+
 * TO DO
   * implement lifecycle test on what's there so far
   * local-tar
@@ -16,6 +83,7 @@ Last full review: 2024-05-06
   design of that feature to a separate part of the document in case it ever comes back.
 * Lifecycle tests
   * remember to check contents of `push` and `pull` files at least once
+  * Include a file whose name looks like repo storage e.g. path@d,123,123
   * bootstrap
     * create site1
     * init-repo
