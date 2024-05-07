@@ -68,3 +68,14 @@ func WithStdout(fn func()) ([]byte, []byte) {
 	<-done
 	return buf1.Bytes(), buf2.Bytes()
 }
+
+func ExpStdout(t *testing.T, fn func(), expStdoutContains, expStderrContains string) {
+	t.Helper()
+	stdout, stderr := WithStdout(fn)
+	if !strings.Contains(string(stdout), expStdoutContains) {
+		t.Errorf("wrong stdout: %s", stdout)
+	}
+	if !strings.Contains(string(stderr), expStderrContains) {
+		t.Errorf("wrong stdout: %s", stderr)
+	}
+}

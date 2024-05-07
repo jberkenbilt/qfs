@@ -3,7 +3,9 @@ package misc_test
 import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/misc"
+	"github.com/jberkenbilt/qfs/testutil"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -63,5 +65,66 @@ func TestDoConcurrently(t *testing.T) {
 	}
 	if !reflect.DeepEqual(exp, data) {
 		t.Errorf("data: %#v", data)
+	}
+}
+
+func TestBlockedPrompt(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+	}()
+	var panicMessage string
+	stdout, _ := testutil.WithStdout(func() {
+		defer func() {
+			panicMessage = recover().(string)
+		}()
+		misc.TestPromptChannel = make(chan string)
+		_ = misc.Prompt("Potato?")
+		t.Errorf("didn't panic")
+	})
+	if !strings.Contains(panicMessage, "empty") {
+		t.Errorf("wrong message: %v", panicMessage)
+	}
+	if string(stdout) != "Potato? [y/n] \n" {
+		t.Errorf("didn't see prompt: |%s|", stdout)
+	}
+}
+
+func TestBlockedMessage(t *testing.T) {
+	defer func() {
+		misc.TestMessageChannel = nil
+	}()
+	var panicMessage string
+	func() {
+		defer func() {
+			panicMessage = recover().(string)
+		}()
+		misc.TestMessageChannel = make(chan string)
+		misc.Message("potato")
+		t.Errorf("didn't panic")
+	}()
+	if !strings.Contains(panicMessage, "full") {
+		t.Errorf("wrong message: %v", panicMessage)
+	}
+}
+
+func TestMessagePromptChannels(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+		misc.TestMessageChannel = nil
+	}()
+	misc.TestPromptChannel = make(chan string, 1)
+	misc.TestMessageChannel = make(chan string, 1)
+	misc.TestPromptChannel <- "y"
+	stdout, _ := testutil.WithStdout(func() {
+		misc.Message("quack")
+		if !misc.Prompt("Moo?") {
+			t.Errorf("prompt didn't work")
+		}
+		if m := <-misc.TestMessageChannel; m != "quack" {
+			t.Errorf("message didn't work: |%s|", m)
+		}
+	})
+	if string(stdout) != "Moo? [y/n] \n" {
+		t.Errorf("wrong output: %s", stdout)
 	}
 }

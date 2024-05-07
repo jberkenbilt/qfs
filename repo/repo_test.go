@@ -10,6 +10,7 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/gztar"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/qfs"
 	"github.com/jberkenbilt/qfs/repo"
 	"github.com/jberkenbilt/qfs/repofiles"
@@ -420,22 +421,106 @@ func TestRepo_IsInitialized(t *testing.T) {
 	}
 }
 
-func TestInitRepo(t *testing.T) {
+func TestLifecycle(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+		misc.TestMessageChannel = nil
+	}()
 	setUpTestBucket()
 	tmp := t.TempDir()
 	j := func(path string) string { return filepath.Join(tmp, path) }
-	err := gztar.Extract("testdata/files.tar.gz", tmp)
-	testutil.Check(t, os.MkdirAll(j(repofiles.Top), 0777))
-	testutil.Check(t, os.WriteFile(j(repofiles.RepoConfig), []byte("s3://"+TestBucket+"/home"), 0666))
-	testutil.Check(t, err)
+
+	// This very long test exercises a series of sites and a repository through a
+	// lifecycle of supported operations. As such, later parts of the test will
+	// depend on earlier parts in a fairly tight way, but this is an acceptable price
+	// to pay since it is essential to exercise that qfs works properly over a long
+	// series of transactions.
+
+	// Monitor messages. Send a magic string to catch up send messages accumulated so
+	// far.
+	msgChan := make(chan []string, 1)
+	misc.TestMessageChannel = make(chan string, 5)
+	defer close(misc.TestMessageChannel)
+	const MsgCatchup = "!CHECK!"
+	go func() {
+		var accumulated []string
+		for m := range misc.TestMessageChannel {
+			if m == MsgCatchup {
+				msgChan <- accumulated
+				accumulated = nil
+			} else {
+				accumulated = append(accumulated, m)
+			}
+		}
+	}()
+	getMessages := func() []string {
+		misc.Message(MsgCatchup)
+		return <-msgChan
+	}
+	checkMessages := func(exp []string) {
+		t.Helper()
+		messages := getMessages()
+		mActual := map[string]struct{}{}
+		for _, m := range messages {
+			mActual[m] = struct{}{}
+		}
+		mExp := map[string]struct{}{}
+		for _, m := range exp {
+			mExp[m] = struct{}{}
+		}
+		if !reflect.DeepEqual(mActual, mExp) {
+			t.Errorf("messages: got %v, wanted %v", messages, exp)
+		}
+	}
+
+	// Extract files to create a site.
+	err := gztar.Extract("testdata/files.tar.gz", j("site1"))
+	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0777))
+
+	// Attempt to initialize without a repository configuration.
+	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	if err == nil || !strings.Contains(err.Error(), "/site1/.qfs/repo:") {
+		t.Errorf("expected no repo config: %v", err)
+	}
+
+	// Initialize a repository normally
+	testutil.Check(t, os.WriteFile(j("site1/"+repofiles.RepoConfig), []byte("s3://"+TestBucket+"/home"), 0666))
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
-	err = qfs.Run([]string{"qfs", "init-repo", "-top", tmp})
+	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
 	if err != nil {
 		t.Errorf("init: %v", err)
 	}
-	err = qfs.Run([]string{"qfs", "init-repo", "-top", tmp})
-	if err == nil || !strings.Contains(err.Error(), "already initialized") {
-		t.Errorf("wrong error: %v", err)
-	}
+	checkMessages([]string{"uploading repository database"})
+
+	// Re-initialize and abort
+	misc.TestPromptChannel = make(chan string, 1)
+	misc.TestPromptChannel <- "n"
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "already initialized") {
+				t.Errorf("wrong error: %v", err)
+			}
+		},
+		"Repository is already initialized. Rebuild database?",
+		"",
+	)
+	checkMessages(nil)
+
+	// Re-initialize
+	misc.TestPromptChannel <- "y"
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("error: %v", err)
+			}
+		},
+		"Repository is already initialized. Rebuild database?",
+		"",
+	)
+	checkMessages([]string{"uploading repository database"})
 }
