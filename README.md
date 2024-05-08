@@ -90,6 +90,7 @@ for i in all:
     * initial push
     * second push (no changes)
     * pull (no changes)
+    * XXX HERE -- decide on what all the files will be
     * create site2 with no filter defined
     * pull
     * create filter locally with some things not in site1's filter
@@ -100,7 +101,7 @@ for i in all:
     * pull again (no changes)
   * changes
     * change a file in site1
-    * change a different files in site2
+    * change a different file in site2
       * modify a file without changing permissions
       * modify a file and change permissions
       * modify a read-only file

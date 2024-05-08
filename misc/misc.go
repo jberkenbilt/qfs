@@ -52,7 +52,7 @@ func Prompt(prompt string) bool {
 		select {
 		case answer = <-TestPromptChannel:
 		default:
-			panic("prompt called with empty TestPromptChannel")
+			panic("prompt called with empty TestPromptChannel: " + prompt)
 		}
 	} else {
 		_, _ = fmt.Scanln(&answer)

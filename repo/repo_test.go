@@ -19,6 +19,7 @@ import (
 	"github.com/jberkenbilt/qfs/testutil"
 	"github.com/jberkenbilt/qfs/traverse"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -131,6 +132,19 @@ func setUpTestBucket() {
 	if err != nil {
 		panic(err.Error())
 	}
+}
+
+func writeFile(
+	t *testing.T,
+	filename string,
+	modTime int64,
+	permissions uint16,
+	contents string,
+) {
+	testutil.Check(t, os.MkdirAll(filepath.Dir(filename), 0777))
+	testutil.Check(t, os.WriteFile(filename, []byte(contents), 0666))
+	testutil.Check(t, os.Chtimes(filename, time.Time{}, time.UnixMilli(modTime)))
+	testutil.Check(t, os.Chmod(filename, fs.FileMode(permissions)))
 }
 
 func TestS3Source(t *testing.T) {
@@ -469,16 +483,15 @@ func TestLifecycle(t *testing.T) {
 			mExp[m] = struct{}{}
 		}
 		if !reflect.DeepEqual(mActual, mExp) {
-			t.Errorf("messages: got %v, wanted %v", messages, exp)
+			t.Errorf("messages: got %#v, wanted %#v", messages, exp)
 		}
 	}
 
-	// Extract files to create a site.
-	err := gztar.Extract("testdata/files.tar.gz", j("site1"))
+	// Create a directory for a site.
 	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0777))
 
 	// Attempt to initialize without a repository configuration.
-	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	err := qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
 	if err == nil || !strings.Contains(err.Error(), "/site1/.qfs/repo:") {
 		t.Errorf("expected no repo config: %v", err)
 	}
@@ -523,4 +536,112 @@ func TestLifecycle(t *testing.T) {
 		"",
 	)
 	checkMessages([]string{"uploading repository database"})
+
+	// Do the initial push without initializing site
+	err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+	if err == nil || !strings.Contains(err.Error(), "site1/.qfs/site:") {
+		t.Errorf("wrong error: %v", err)
+	}
+
+	// Set up the site, and do the initial push. We'll explicitly assign timestamps
+	// relative to the current time so we can force them to be updated at various
+	// points.
+	start := time.Now().Add(-24 * time.Hour).UnixMilli()
+	writeFile(t, j("site1/.qfs/site"), start, 0644, "site1\n")
+	writeFile(t, j("site1/.qfs/filters/prune"), start, 0644, `
+:prune:
+junk
+:junk:(~|.junk)$
+`)
+	writeFile(t, j("site1/.qfs/filters/repo"), start, 0644, `
+:read:prune
+:exclude:
+*/no-sync
+:include:
+dir1
+dir2
+dir3
+dir4
+dir5
+`)
+	writeFile(t, j("site1/.qfs/filters/site1"), start, 0644, `
+:read:prune
+:include:
+dir1
+dir2
+dir3
+`)
+	writeFile(t, j("site1/dir1/file-in-dir1"), start, 0444, "read-only")
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("push: %v", err)
+			}
+		},
+		`add .qfs/filters/prune
+add .qfs/filters/repo
+add .qfs/filters/site1
+mkdir dir1
+add dir1/file-in-dir1
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+		"storing .qfs/filters/prune",
+		"storing .qfs/filters/repo",
+		"storing .qfs/filters/site1",
+		"storing dir1",
+		"storing dir1/file-in-dir1",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Do another push right away. There should be no changes.
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("push: %v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"no changes to push",
+		"uploading site database",
+	})
+
+	// Pull after push -- no changes expected
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("push: %v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no changes to pull",
+	})
 }

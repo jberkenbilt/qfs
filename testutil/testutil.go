@@ -72,10 +72,10 @@ func WithStdout(fn func()) ([]byte, []byte) {
 func ExpStdout(t *testing.T, fn func(), expStdoutContains, expStderrContains string) {
 	t.Helper()
 	stdout, stderr := WithStdout(fn)
-	if !strings.Contains(string(stdout), expStdoutContains) {
+	if (expStdoutContains == "" && len(stdout) > 0) || !strings.Contains(string(stdout), expStdoutContains) {
 		t.Errorf("wrong stdout: %s", stdout)
 	}
-	if !strings.Contains(string(stderr), expStderrContains) {
-		t.Errorf("wrong stdout: %s", stderr)
+	if (expStderrContains == "" && len(stderr) > 0) || !strings.Contains(string(stderr), expStderrContains) {
+		t.Errorf("wrong stderr: %s", stderr)
 	}
 }
