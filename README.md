@@ -76,6 +76,7 @@ for i in all:
   * local-tar
   * clean-repo
   * push-db
+  * pull-repo
   * list
   * get
   * rsync
@@ -299,6 +300,8 @@ qfs subcommand [options]
     pulled. This is the file created by `push -save-site`.
 * `push-db` -- regenerate local db and push to repository
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
+* `pull-repo` -- pull the latest repository database
+  * When followed by `push`, this can be used to revert the repository to the state of a site.
 * `clean-repo` -- remove files from the repository that are not matched by the filter
   * This can be useful if things are pushed by mistake and then the repo filter is adjusted to
     exclude them.
