@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"golang.org/x/exp/maps"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,9 +23,13 @@ import (
 var CurUid = os.Getuid()
 var CurGid = os.Getgid()
 
-type Options func(*Db)
+type Options func(*Loader)
 
-type Db struct {
+type Scanner interface {
+	Scan() (Database, error)
+}
+
+type Loader struct {
 	path       *fileinfo.Path
 	format     DbFormat
 	f          io.ReadCloser
@@ -48,160 +54,166 @@ const (
 
 var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
 
-func OpenFile(path string, options ...Options) (*Db, error) {
-	return Open(fileinfo.NewPath(fileinfo.NewLocal(""), path), options...)
+func LoadFile(path string, options ...Options) (Database, error) {
+	return Load(fileinfo.NewPath(fileinfo.NewLocal(""), path), options...)
 }
 
-// Open opens a database. The resulting object is a fileinfo.Provider. You must
+// Load opens a database. The resulting object is a fileinfo.Provider. You must
 // call Close() on the database, which will close the `f` parameter. The
 // `pathForErrors` parameter is just used for error messages. See also OpenFile.
-func Open(path *fileinfo.Path, options ...Options) (*Db, error) {
+func Load(path *fileinfo.Path, options ...Options) (Database, error) {
 	f, err := path.Open()
 	if err != nil {
 		return nil, err
 	}
-	db := &Db{
+	defer func() { _ = f.Close() }()
+	ld := &Loader{
 		path: path,
 		f:    f,
 		r:    bufio.NewReader(f),
 	}
-	if err := db.readHeader(); err != nil {
+	if err := ld.readHeader(); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	for _, fn := range options {
-		fn(db)
+		fn(ld)
+	}
+
+	db := Database{}
+	err = ld.forEachRow(func(info *fileinfo.FileInfo) error {
+		db[info.Path] = info
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return db, nil
 }
 
-func WithFilters(filters []*filter.Filter) func(*Db) {
-	return func(db *Db) {
-		db.filters = filters
+func WithFilters(filters []*filter.Filter) func(*Loader) {
+	return func(ld *Loader) {
+		ld.filters = filters
 	}
 }
 
-func WithRepoRules(repoRules bool) func(*Db) {
-	return func(db *Db) {
-		db.repoRules = repoRules
+func WithRepoRules(repoRules bool) func(*Loader) {
+	return func(ld *Loader) {
+		ld.repoRules = repoRules
 	}
 }
 
-func WithFilesOnly(filesOnly bool) func(*Db) {
-	return func(db *Db) {
-		db.filesOnly = filesOnly
+func WithFilesOnly(filesOnly bool) func(*Loader) {
+	return func(ld *Loader) {
+		ld.filesOnly = filesOnly
 	}
 }
 
-func WithNoSpecial(noSpecial bool) func(*Db) {
-	return func(db *Db) {
-		db.noSpecial = noSpecial
+func WithNoSpecial(noSpecial bool) func(*Loader) {
+	return func(ld *Loader) {
+		ld.noSpecial = noSpecial
 	}
 }
 
-func (db *Db) readHeader() error {
-	first, err := db.readBytes('\n')
+func (ld *Loader) readHeader() error {
+	first, err := ld.readBytes('\n')
 	if err != nil {
 		return err
 	}
 	header := string(first)
 	if header == "QFS 1" {
-		db.format = DbQfs
+		ld.format = DbQfs
 	} else if header == "QFS REPO 1" {
-		db.format = DbRepo
+		ld.format = DbRepo
 	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
-		db.format = DbQSync
+		ld.format = DbQSync
 	} else {
-		return fmt.Errorf("%s is not a qfs database", db.path.Path())
+		return fmt.Errorf("%s is not a qfs database", ld.path.Path())
 	}
 	return nil
 }
 
-func (db *Db) readBytes(delimiter byte) ([]byte, error) {
-	db.lastOffset = db.nextOffset
-	data, err := db.r.ReadBytes(delimiter)
+func (ld *Loader) readBytes(delimiter byte) ([]byte, error) {
+	ld.lastOffset = ld.nextOffset
+	data, err := ld.r.ReadBytes(delimiter)
 	if err != nil {
-		return data, fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
+		return data, fmt.Errorf("%s at offset %d: %w", ld.path.Path(), ld.lastOffset, err)
 	}
-	db.nextOffset += uint64(len(data))
+	ld.nextOffset += uint64(len(data))
 	return data[:len(data)-1], nil
 }
 
-func (db *Db) read(data []byte) error {
-	db.lastOffset = db.nextOffset
-	n, err := io.ReadFull(db.r, data)
+func (ld *Loader) read(data []byte) error {
+	ld.lastOffset = ld.nextOffset
+	n, err := io.ReadFull(ld.r, data)
 	if err != nil {
-		return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
+		return fmt.Errorf("%s at offset %d: %w", ld.path.Path(), ld.lastOffset, err)
 	}
-	db.nextOffset += uint64(n)
+	ld.nextOffset += uint64(n)
 	return nil
 }
 
-func (db *Db) skip(val byte) error {
+func (ld *Loader) skip(val byte) error {
 	skip := make([]byte, 1)
-	err := db.read(skip)
+	err := ld.read(skip)
 	if err != nil {
 		return err
 	}
 	if skip[0] != val {
-		return fmt.Errorf("%s: expected byte %d at offset %d", db.path.Path(), val, db.lastOffset)
+		return fmt.Errorf("%s: expected byte %d at offset %d", ld.path.Path(), val, ld.lastOffset)
 	}
 	return nil
 }
 
-func (db *Db) Close() error {
-	return db.f.Close()
-}
-
-func (db *Db) getRow() ([]byte, error) {
-	if db.format == DbQSync {
+func (ld *Loader) getRow() ([]byte, error) {
+	if ld.format == DbQSync {
 		// Discard null character
-		if err := db.skip(0); err != nil {
+		if err := ld.skip(0); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, nil
 			}
 			return nil, err
 		}
 	}
-	start, err := db.readBytes(0)
+	start, err := ld.readBytes(0)
 	if err != nil {
-		if db.format != DbQSync && len(start) == 0 && errors.Is(err, io.EOF) {
+		if ld.format != DbQSync && len(start) == 0 && errors.Is(err, io.EOF) {
 			return nil, nil
 		}
 		return nil, err
 	}
 	m := lenRe.FindSubmatch(start)
 	if len(m) == 0 {
-		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", db.path.Path(), db.lastOffset)
+		return nil, fmt.Errorf("%s at offset %d: expected length[/same]", ld.path.Path(), ld.lastOffset)
 	}
 	length, _ := strconv.Atoi(string(m[1]))
 	same := 0
 	if m[2] != nil {
 		same, _ = strconv.Atoi(string(m[2]))
-		if len(db.lastRow) < same {
-			return nil, fmt.Errorf("%s at offset %d: `same` value is too large", db.path.Path(), db.lastOffset)
+		if len(ld.lastRow) < same {
+			return nil, fmt.Errorf("%s at offset %d: `same` value is too large", ld.path.Path(), ld.lastOffset)
 		}
 	}
 	data := make([]byte, length+same)
-	copy(data, db.lastRow[:same])
-	err = db.read(data[same:])
+	copy(data, ld.lastRow[:same])
+	err = ld.read(data[same:])
 	if err != nil {
 		return nil, err
 	}
-	err = db.skip('\n')
+	err = ld.skip('\n')
 	if err != nil {
 		return nil, err
 	}
-	db.lastRow = data
+	ld.lastRow = data
 	return data, nil
 }
 
-func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
-	if db.lastRow != nil {
+func (ld *Loader) forEachRow(fn func(*fileinfo.FileInfo) error) error {
+	if ld.lastRow != nil {
 		panic("ForEach called on database that's already been read")
 	}
 	for {
-		data, err := db.getRow()
+		data, err := ld.getRow()
 		if err != nil {
 			return err
 		}
@@ -210,21 +222,21 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 		}
 		fields := strings.Split(string(data), "\x00")
 		var f *fileinfo.FileInfo
-		switch db.format {
+		switch ld.format {
 		case DbQSync:
-			f, err = db.handleQSync(fields)
+			f, err = ld.handleQSync(fields)
 		case DbQfs:
-			f, err = db.handleQfs(fields)
+			f, err = ld.handleQfs(fields)
 		case DbRepo:
-			f, err = db.handleRepo(fields)
+			f, err = ld.handleRepo(fields)
 		}
 		if err != nil {
-			return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
+			return fmt.Errorf("%s at offset %d: %w", ld.path.Path(), ld.lastOffset, err)
 		}
-		db.lastFields = fields
+		ld.lastFields = fields
 		if f != nil {
-			included, _ := filter.IsIncluded(f.Path, db.repoRules, db.filters...)
-			if included && (db.filesOnly || db.noSpecial) {
+			included, _ := filter.IsIncluded(f.Path, ld.repoRules, ld.filters...)
+			if included && (ld.filesOnly || ld.noSpecial) {
 				switch f.FileType {
 				case fileinfo.TypeBlockDev:
 					included = false
@@ -235,7 +247,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 				case fileinfo.TypePipe:
 					included = false
 				case fileinfo.TypeDirectory:
-					if db.filesOnly {
+					if ld.filesOnly {
 						included = false
 					}
 				default:
@@ -244,7 +256,7 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 			if included {
 				err = fn(f)
 				if err != nil {
-					return fmt.Errorf("%s at offset %d: %w", db.path.Path(), db.lastOffset, err)
+					return fmt.Errorf("%s at offset %d: %w", ld.path.Path(), ld.lastOffset, err)
 				}
 			}
 		}
@@ -252,21 +264,21 @@ func (db *Db) ForEach(fn func(*fileinfo.FileInfo) error) error {
 	return nil
 }
 
-func (db *Db) copyFieldIfEmpty(fields []string, n int) {
-	if len(fields) > n && fields[n] == "" && len(db.lastFields) > n {
-		fields[n] = db.lastFields[n]
+func (ld *Loader) copyFieldIfEmpty(fields []string, n int) {
+	if len(fields) > n && fields[n] == "" && len(ld.lastFields) > n {
+		fields[n] = ld.lastFields[n]
 	}
 }
 
-func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
+func (ld *Loader) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 	if len(fields) != 9 {
 		return nil, fmt.Errorf("wrong number of fields: %d, not 9", len(fields))
 	}
 	// 0    1     2    3    4   5   6          7
 	// name mtime size mode uid gid link_count special
-	db.copyFieldIfEmpty(fields, 3) // mode
-	db.copyFieldIfEmpty(fields, 4) // uid
-	db.copyFieldIfEmpty(fields, 5) // gid
+	ld.copyFieldIfEmpty(fields, 3) // mode
+	ld.copyFieldIfEmpty(fields, 4) // uid
+	ld.copyFieldIfEmpty(fields, 5) // gid
 	path := strings.TrimPrefix(fields[0], "./")
 	mode, _ := strconv.ParseInt(fields[3], 8, 32)
 	fType := mode & 0o170000
@@ -314,15 +326,15 @@ func (db *Db) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 	}, nil
 }
 
-func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
+func (ld *Loader) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 	if len(fields) != 8 {
 		return nil, fmt.Errorf("wrong number of fields: %d, not 8", len(fields))
 	}
 	// 0    1     2     3    4    5   6   7
 	// name fType mtime size mode uid gid special
-	db.copyFieldIfEmpty(fields, 4) // mode
-	db.copyFieldIfEmpty(fields, 5) // uid
-	db.copyFieldIfEmpty(fields, 6) // gid
+	ld.copyFieldIfEmpty(fields, 4) // mode
+	ld.copyFieldIfEmpty(fields, 5) // uid
+	ld.copyFieldIfEmpty(fields, 6) // gid
 	path := fields[0]
 	fileType := fileinfo.TypeUnknown
 	if len(fields[1]) == 1 {
@@ -345,13 +357,13 @@ func (db *Db) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 	}, nil
 }
 
-func (db *Db) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
+func (ld *Loader) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
 	if len(fields) != 7 {
 		return nil, fmt.Errorf("wrong number of fields: %d, not 7", len(fields))
 	}
 	// 0    1      2     3     4    5    6
 	// name s3Time fType mtime size mode special
-	db.copyFieldIfEmpty(fields, 5) // mode
+	ld.copyFieldIfEmpty(fields, 5) // mode
 	path := fields[0]
 	s3milliseconds, _ := strconv.Atoi(fields[1])
 	fileType := fileinfo.TypeUnknown
@@ -392,7 +404,7 @@ func newOrEmpty[T comparable](first bool, old *T, new T, s string) string {
 	return ""
 }
 
-func WriteDb(filename string, files fileinfo.Provider, format DbFormat) error {
+func WriteDb(filename string, files Database, format DbFormat) error {
 	var header string
 	switch format {
 	case DbQSync:
@@ -469,4 +481,34 @@ func WriteDb(filename string, files fileinfo.Provider, format DbFormat) error {
 		return err
 	}
 	return w.Close()
+}
+
+type Database map[string]*fileinfo.FileInfo
+
+func (db Database) ForEach(fn func(*fileinfo.FileInfo) error) error {
+	keys := maps.Keys(db)
+	sort.Strings(keys)
+	for _, k := range keys {
+		if err := fn(db[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db Database) Print(long bool) error {
+	return db.ForEach(func(f *fileinfo.FileInfo) error {
+		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
+		if long {
+			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
+		}
+		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+		if f.FileType == fileinfo.TypeLink {
+			fmt.Printf(" -> %s", f.Special)
+		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
+			fmt.Printf(" %s", f.Special)
+		}
+		fmt.Println("")
+		return nil
+	})
 }

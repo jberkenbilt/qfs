@@ -168,7 +168,7 @@ func TestS3Source(t *testing.T) {
 	}
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	testutil.Check(t, err)
-	makeSrc := func(db database.Memory) *s3source.S3Source {
+	makeSrc := func(db database.Database) *s3source.S3Source {
 		t.Helper()
 		src, err := s3source.New(
 			TestBucket,

@@ -25,9 +25,8 @@ func TestRoundTrip(t *testing.T) {
 	j := func(path string) string {
 		return filepath.Join(tmp, path)
 	}
-	db1, err := database.OpenFile("testdata/real.qsync")
+	db1, err := database.LoadFile("testdata/real.qsync")
 	testutil.Check(t, err)
-	defer func() { _ = db1.Close() }()
 	err = database.WriteDb("/does/not/exist", db1, database.DbQSync)
 	if err == nil || !strings.Contains(err.Error(), "qsync format not supported for write") {
 		t.Errorf("wrong error: %v", err)
@@ -42,24 +41,21 @@ func TestRoundTrip(t *testing.T) {
 	}
 	err = database.WriteDb(j("qsync-to-qfs"), db1, database.DbQfs)
 	testutil.Check(t, err)
-	db2, err := database.OpenFile(j("qsync-to-qfs"))
+	db2, err := database.LoadFile(j("qsync-to-qfs"))
 	testutil.Check(t, err)
-	defer func() { _ = db2.Close() }()
 	var records []*fileinfo.FileInfo
 	load := func(f *fileinfo.FileInfo) error {
 		records = append(records, f)
 		return nil
 	}
-	db1, _ = database.OpenFile("testdata/real.qsync")
-	defer func() { _ = db1.Close() }()
+	db1, _ = database.LoadFile("testdata/real.qsync")
 	err = db1.ForEach(func(*fileinfo.FileInfo) error {
 		return errors.New("propagated")
 	})
-	if err == nil || !strings.HasPrefix(err.Error(), "testdata/real.qsync at offset 84: propagated") {
+	if err == nil || err.Error() != "propagated" {
 		t.Errorf("error did not propagate from callback: %v", err)
 	}
-	db1, _ = database.OpenFile("testdata/real.qsync")
-	defer func() { _ = db1.Close() }()
+	db1, _ = database.LoadFile("testdata/real.qsync")
 	err = db1.ForEach(load)
 	testutil.Check(t, err)
 	all1 := records
@@ -69,16 +65,6 @@ func TestRoundTrip(t *testing.T) {
 	all2 := records
 	if !reflect.DeepEqual(all1, all2) {
 		t.Error("round trip failed")
-	}
-	var panicMsg string
-	func() {
-		defer func() {
-			panicMsg = recover().(string)
-		}()
-		_ = db2.ForEach(load)
-	}()
-	if !strings.Contains(panicMsg, "already been read") {
-		t.Errorf("didn't get panic: %v", panicMsg)
 	}
 }
 
@@ -93,7 +79,7 @@ func TestPartialFiles(t *testing.T) {
 		if i == 2 {
 			noSpecial = true
 		}
-		db, err := database.OpenFile(
+		db, err := database.LoadFile(
 			"testdata/real.qfs",
 			database.WithFilesOnly(filesOnly),
 			database.WithNoSpecial(noSpecial),
@@ -120,7 +106,6 @@ func TestPartialFiles(t *testing.T) {
 			return nil
 		})
 		testutil.Check(t, err)
-		_ = db.Close()
 		if i == 0 {
 			expFileKeys = fileKeys
 		} else {
@@ -134,7 +119,6 @@ func TestPartialFiles(t *testing.T) {
 		if sawSpecial == (noSpecial || filesOnly) {
 			t.Error("saw unexpected special files")
 		}
-		_ = db.Close()
 	}
 }
 
@@ -156,31 +140,15 @@ func TestErrors(t *testing.T) {
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
 			err := func() error {
-				db, err := database.OpenFile(filename)
+				db, err := database.LoadFile(filename)
 				if err != nil {
 					return err
 				}
-				defer func() { _ = db.Close() }()
 				return db.ForEach(func(*fileinfo.FileInfo) error {
 					return nil
 				})
 			}()
 			checkError(t, err, text)
 		})
-	}
-}
-
-func TestMemory(t *testing.T) {
-	db1, err := database.OpenFile("testdata/real.qfs")
-	testutil.Check(t, err)
-	defer func() { _ = db1.Close() }()
-	db2, err := database.Load(db1)
-	testutil.Check(t, err)
-	defer func() { _ = db2.Close() }()
-	db3, err := database.Load(db2)
-	testutil.Check(t, err)
-	defer func() { _ = db3.Close() }()
-	if !reflect.DeepEqual(db2, db3) {
-		t.Errorf("round trip through memory db failed")
 	}
 }

@@ -39,7 +39,7 @@ type S3Source struct {
 	// Everything below requires mutex protection.
 	m         sync.Mutex
 	modTimes  map[string]time.Time
-	db        database.Memory
+	db        database.Database
 	dbChanged bool
 	seen      map[string]struct{}
 }
@@ -73,7 +73,7 @@ func WithS3Client(client *s3.Client) func(*S3Source) {
 	}
 }
 
-func WithDatabase(db database.Memory) func(*S3Source) {
+func WithDatabase(db database.Database) func(*S3Source) {
 	return func(s *S3Source) {
 		s.db = db
 		s.seen = map[string]struct{}{}

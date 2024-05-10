@@ -616,11 +616,11 @@ func (r *Repo) Pull(config *PullConfig) error {
 	}
 	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(site))
 	files, err := database.Open(repoSiteDbPath, database.WithRepoRules(true))
-	var siteDb database.Memory
+	var siteDb database.Database
 	var nsk *types.NoSuchKey
 	if errors.As(err, &nsk) {
 		misc.Message("repository doesn't contain a database for this site")
-		siteDb = database.Memory{}
+		siteDb = database.Database{}
 	} else if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -773,7 +773,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 func (r *Repo) applyChangesFromRepo(
 	src *s3source.S3Source,
 	diffResult *diff.Result,
-	localDb database.Memory,
+	localDb database.Database,
 ) error {
 	// Apply changes. Possible enhancement: make sure every directory we have to
 	// modify (by adding or removing files) is writable first, and if we change it,
@@ -861,7 +861,7 @@ func (r *Repo) applyChangesFromRepo(
 	return nil
 }
 
-func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
+func (r *Repo) loadRepoDb() (bool, database.Database, error) {
 	localPath := r.localPath(repofiles.RepoDb())
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {

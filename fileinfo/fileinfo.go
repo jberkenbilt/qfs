@@ -35,12 +35,6 @@ type FileInfo struct {
 	S3Time      time.Time
 }
 
-type Provider interface {
-	// ForEach provides each FileInfo in a non-deterministic order.
-	ForEach(func(*FileInfo) error) error
-	Close() error
-}
-
 type DirEntry struct {
 	Name   string
 	S3Dir  bool
@@ -97,24 +91,6 @@ func (p *Path) Relative(other string) *Path {
 
 func (p *Path) Join(elem string) *Path {
 	return NewPath(p.source, filepath.Join(p.path, elem))
-}
-
-func PrintDb(p Provider, long bool) error {
-	return p.ForEach(func(f *FileInfo) error {
-		fmt.Printf("%013d %c %08d %04o", f.ModTime.UnixMilli(), f.FileType, f.Size, f.Permissions)
-		if long {
-			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
-		}
-		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
-		if f.FileType == TypeLink {
-			fmt.Printf(" -> %s", f.Special)
-		} else if f.FileType == TypeBlockDev || f.FileType == TypeCharDev {
-			fmt.Printf(" %s", f.Special)
-		}
-		fmt.Println("")
-		return nil
-	})
-
 }
 
 // RequiresCopy returns true when src is a plain file and dest is other than a
