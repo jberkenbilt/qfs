@@ -26,8 +26,8 @@ var CurGid = os.Getgid()
 
 type Options func(*Loader)
 
-type Scanner interface {
-	Scan() (Database, error)
+type Provider interface {
+	Database() (Database, error)
 }
 
 type Loader struct {

@@ -6,6 +6,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
@@ -155,6 +156,7 @@ func (tr *Traverser) traverse(node *treeNode) {
 
 func New(root string, options ...Options) (*Traverser, error) {
 	tr := &Traverser{
+		fs:         localsource.New(root),
 		errChan:    make(chan error, numWorkers),
 		notifyChan: make(chan string, numWorkers),
 		workChan:   make(chan *treeNode, numWorkers),
@@ -164,11 +166,7 @@ func New(root string, options ...Options) (*Traverser, error) {
 	for _, fn := range options {
 		fn(tr)
 	}
-	if tr.fs == nil {
-		tr.fs = localsource.New(root)
-	}
 	tr.root = fileinfo.NewPath(tr.fs, ".")
-
 	fi, err := tr.root.FileInfo()
 	if err != nil {
 		return nil, err
@@ -204,12 +202,6 @@ func WithFilesOnly(filesOnly bool) func(*Traverser) {
 func WithNoSpecial(noSpecial bool) func(*Traverser) {
 	return func(tr *Traverser) {
 		tr.noSpecial = noSpecial
-	}
-}
-
-func WithSource(fs *localsource.LocalSource) func(*Traverser) {
-	return func(tr *Traverser) {
-		tr.fs = fs
 	}
 }
 
@@ -280,10 +272,11 @@ func (tr *Traverser) Traverse(
 	}, nil
 }
 
-// ForEach traverses the traversal result and calls the function for each item in
-// lexical order. If the function returns an error, traversal is stopped, and the
-// error is returned. This implements the fileinfo.FileProvider interface.
-func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
+// Database traverses the traversal result and calls the function for each item
+// in lexical order. If the function returns an error, traversal is stopped, and
+// the error is returned. This implements the database.Provider interface.
+func (r *Result) Database() (database.Database, error) {
+	db := database.Database{}
 	q := list.New()
 	q.PushFront(r.tree)
 	for q.Len() > 0 {
@@ -294,19 +287,12 @@ func (r *Result) ForEach(fn func(f *fileinfo.FileInfo) error) error {
 		// directory itself won't appear. This could be changed if desired, but it would
 		// involve an extra tree traversal.
 		if cur.included {
-			if err := fn(cur.info); err != nil {
-				return err
-			}
+			db[cur.info.Path] = cur.info
 		}
 		n := len(cur.children)
 		for i := range cur.children {
 			q.PushFront(cur.children[n-i-1])
 		}
 	}
-	return nil
-}
-
-// Close is needed by fileinfo.Provider
-func (r *Result) Close() error {
-	return nil
+	return db, nil
 }

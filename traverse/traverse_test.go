@@ -82,14 +82,9 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	all := map[string]*fileinfo.FileInfo{}
-	var keys []string
-	fn := func(f *fileinfo.FileInfo) error {
-		all[f.Path] = f
-		keys = append(keys, f.Path)
-		return nil
-	}
-	_ = files.ForEach(fn)
+	all, _ := files.Database()
+	keys := maps.Keys(all)
+	sort.Strings(keys)
 	expKeys := []string{
 		".",
 		"potato",
@@ -151,9 +146,9 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	maps.Clear(all)
-	keys = nil
-	_ = files.ForEach(fn)
+	all, _ = files.Database()
+	keys = maps.Keys(all)
+	sort.Strings(keys)
 	expKeys = []string{
 		".",
 		"potato",
@@ -186,9 +181,9 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	maps.Clear(all)
-	keys = nil
-	_ = files.ForEach(fn)
+	all, _ = files.Database()
+	keys = maps.Keys(all)
+	sort.Strings(keys)
 	expKeys = []string{
 		"potato",
 		"quack",
@@ -220,7 +215,8 @@ func TestDevices(t *testing.T) {
 		}
 		foundChar := false
 		foundBlock := false
-		_ = files.ForEach(func(f *fileinfo.FileInfo) error {
+		db, _ := files.Database()
+		for _, f := range db {
 			if f.FileType == fileinfo.TypeCharDev {
 				foundChar = true
 			}
@@ -229,10 +225,9 @@ func TestDevices(t *testing.T) {
 			}
 			if foundBlock && foundChar {
 				// Stop traversing -- we got what we need
-				return errors.New("stop")
+				break
 			}
-			return nil
-		})
+		}
 		if foundChar == noSpecial {
 			t.Errorf("didn't find any character devices")
 		}
@@ -302,13 +297,8 @@ func TestFilterInteraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traverse failed: %v", err)
 	}
-	allFiles := map[string]*fileinfo.FileInfo{}
-	var paths []string
-	_ = files.ForEach(func(f *fileinfo.FileInfo) error {
-		allFiles[f.Path] = f
-		paths = append(paths, f.Path)
-		return nil
-	})
+	allFiles, _ := files.Database()
+	paths := maps.Keys(allFiles)
 	expPaths := []string{
 		"one/two",
 		"two",
