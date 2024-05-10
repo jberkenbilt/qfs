@@ -2,7 +2,6 @@ package scan
 
 import (
 	"github.com/jberkenbilt/qfs/database"
-	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/traverse"
 	"os"
@@ -61,12 +60,11 @@ func WithFilesOnly(filesOnly bool) func(*Scan) {
 
 // Run scans the input source per the scanner's configuration. The caller must
 // call Close on the resulting provider.
-func (s *Scan) Run() (fileinfo.Provider, error) {
+func (s *Scan) Run() (database.Database, error) {
 	st, err := os.Stat(s.input)
 	if err != nil {
 		return nil, err
 	}
-	var files fileinfo.Provider
 	if st.IsDir() {
 		var tr *traverse.Traverser
 		tr, err = traverse.New(
@@ -82,17 +80,17 @@ func (s *Scan) Run() (fileinfo.Provider, error) {
 			// been caught.
 			return nil, err
 		}
-		files, err = tr.Traverse(nil, nil)
+		result, err := tr.Traverse(nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return result.Database()
 	} else {
-		files, err = database.OpenFile(
+		return database.LoadFile(
 			s.input,
 			database.WithFilters(s.filters),
 			database.WithFilesOnly(s.filesOnly),
 			database.WithNoSpecial(s.noSpecial),
 		)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return files, nil
 }

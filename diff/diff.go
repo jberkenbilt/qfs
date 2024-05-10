@@ -2,6 +2,7 @@ package diff
 
 import (
 	"fmt"
+	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/scan"
@@ -150,12 +151,10 @@ func (d *Diff) RunFiles(input1, input2 string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = files1.Close() }()
 	files2, err := s2.Run()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = files2.Close() }()
 	return d.Run(files1, files2)
 }
 
@@ -168,7 +167,7 @@ func workGet(work map[string]*oldNew, path string) *oldNew {
 	return entry
 }
 
-func (d *Diff) Run(files1, files2 fileinfo.Provider) (*Result, error) {
+func (d *Diff) Run(files1, files2 database.Database) (*Result, error) {
 	work := map[string]*oldNew{}
 	err := files1.ForEach(func(f *fileinfo.FileInfo) error {
 		workGet(work, f.Path).fOld = f
