@@ -1134,9 +1134,28 @@ prompt: Continue?
 		"updated repository copy of site database to reflect changes",
 	})
 
+	// The sites should be in sync except the file we changed in site1 and haven't pushed.
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"diff",
+				j("site1"),
+				j("site2"),
+				"-filter",
+				j("site1/.qfs/filters/site1"),
+				"-filter",
+				j("site1/.qfs/filters/site2"),
+				"-no-dir-times",
+			})
+		},
+		"change dir1/change-in-site1\n",
+		"",
+	)
+
 	// XXX Change site filter to add something locally. Pull: no changes. Pull
 	// -local-filter: see changes.
 
-	// XXX Diff site1 and site2 with both filters, include .qfs/filters. Expect to
-	// see the file that changed in site1 and was not pushed.
+	// XXX Test conflict detection
 }
