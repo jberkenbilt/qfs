@@ -2,10 +2,8 @@ package testutil
 
 import (
 	"bytes"
-	"github.com/jberkenbilt/qfs/qfs"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -27,22 +25,22 @@ func Check(t *testing.T, err error) {
 	}
 }
 
-func CheckLines(t *testing.T, cmd []string, expLines []string) {
-	t.Helper()
-	stdout, stderr := WithStdout(func() {
-		Check(t, qfs.Run(cmd))
-	})
-	if len(stderr) > 0 {
-		t.Errorf("stderr: %s", stderr)
-	}
-	lines := ToLines(stdout)
-	if !slices.Equal(lines, expLines) {
-		t.Error("wrong output")
-		for _, line := range lines {
-			t.Error(line)
-		}
-	}
-}
+//func CheckLines(t *testing.T, cmd []string, expLines []string) {
+//	t.Helper()
+//	stdout, stderr := WithStdout(func() {
+//		Check(t, qfs.Run(cmd))
+//	})
+//	if len(stderr) > 0 {
+//		t.Errorf("stderr: %s", stderr)
+//	}
+//	lines := ToLines(stdout)
+//	if !slices.Equal(lines, expLines) {
+//		t.Error("wrong output")
+//		for _, line := range lines {
+//			t.Error(line)
+//		}
+//	}
+//}
 
 func WithStdout(fn func()) ([]byte, []byte) {
 	originalStdout := os.Stdout
