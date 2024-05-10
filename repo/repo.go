@@ -24,6 +24,11 @@ import (
 	"strings"
 )
 
+// DeleteBatchSize is the number of items we delete from S3 at once. It is set to
+// the maximum value supported by S3 and is a variable that is overridden from
+// the test suite to exercise the batching logic.
+var DeleteBatchSize = 1000
+
 type Options func(*Repo)
 
 type Repo struct {
@@ -494,9 +499,9 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 	// Delete what needs to be deleted.
 	toDelete := diffResult.Rm
 	for len(toDelete) > 0 {
-		last := min(len(toDelete), 1000)
+		last := min(len(toDelete), DeleteBatchSize)
 		batch := toDelete[:last]
-		if len(batch) == last {
+		if len(toDelete) == last {
 			toDelete = nil
 		} else {
 			toDelete = toDelete[last:]
