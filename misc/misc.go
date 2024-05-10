@@ -51,7 +51,7 @@ func Prompt(prompt string) bool {
 		select {
 		case answer = <-TestPromptChannel:
 		default:
-			panic("prompt called with empty TestPromptChannel: " + prompt)
+			_, _ = fmt.Fprintf(os.Stderr, "prompt called with empty TestPromptChannel: "+prompt)
 		}
 	} else {
 		fmt.Printf("%s [y/n] ", prompt)

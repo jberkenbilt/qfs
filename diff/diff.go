@@ -74,7 +74,7 @@ func (m *MetaChange) String() string {
 type Result struct {
 	Check      []*Check
 	TypeChange []string // path
-	Rm         []string // path
+	Rm         []*fileinfo.FileInfo
 	Add        []*fileinfo.FileInfo
 	Change     []*fileinfo.FileInfo
 	MetaChange []*MetaChange
@@ -209,7 +209,7 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 				ModTime: []int64{f.ModTime.UnixMilli()},
 			})
 		}
-		r.Rm = append(r.Rm, f.Path)
+		r.Rm = append(r.Rm, f)
 	} else if data.fOld == nil {
 		// The file is new. Allow it to already exist with the correct modification time.
 		f := data.fNew
@@ -244,7 +244,7 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 		if data.fOld.FileType != data.fNew.FileType {
 			// The type has changed. Remove and add. Also indicate the type change for information.
 			r.TypeChange = append(r.TypeChange, path)
-			r.Rm = append(r.Rm, path)
+			r.Rm = append(r.Rm, data.fOld)
 			r.Add = append(r.Add, data.fNew)
 		} else if data.fOld.Special != data.fNew.Special {
 			// Special has changed, so this will need to be replaced.
@@ -303,7 +303,7 @@ func (r *Result) WriteDiff(f *os.File, withChecks bool) error {
 		}
 	}
 	for _, m := range r.Rm {
-		if _, err := fmt.Fprintf(f, "rm %s\n", m); err != nil {
+		if _, err := fmt.Fprintf(f, "rm %s\n", m.Path); err != nil {
 			// TEST: NOT COVERED
 			return err
 		}

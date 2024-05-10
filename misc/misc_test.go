@@ -5,7 +5,6 @@ import (
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/testutil"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -72,20 +71,17 @@ func TestBlockedPrompt(t *testing.T) {
 	defer func() {
 		misc.TestPromptChannel = nil
 	}()
-	var panicMessage string
-	stdout, _ := testutil.WithStdout(func() {
-		defer func() {
-			panicMessage = recover().(string)
-		}()
+	stdout, stderr := testutil.WithStdout(func() {
 		misc.TestPromptChannel = make(chan string)
-		_ = misc.Prompt("Potato?")
-		t.Errorf("didn't panic")
+		if misc.Prompt("Potato?") {
+			t.Errorf("affirmative with no prompt")
+		}
 	})
-	if !strings.Contains(panicMessage, "empty") {
-		t.Errorf("wrong message: %v", panicMessage)
-	}
 	if string(stdout) != "prompt: Potato?\n" {
 		t.Errorf("didn't see prompt: |%s|", stdout)
+	}
+	if string(stderr) != "prompt called with empty TestPromptChannel: Potato?" {
+		t.Errorf("wrong stderr: %s", stderr)
 	}
 }
 

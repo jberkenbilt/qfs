@@ -470,9 +470,13 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 		}
 		var objects []types.ObjectIdentifier
 		for _, p := range batch {
-			misc.Message("removing %s", p)
+			key := filepath.Join(r.prefix, p.Path)
+			if p.FileType == fileinfo.TypeDirectory {
+				key += "/"
+			}
+			misc.Message("removing %s", p.Path)
 			objects = append(objects, types.ObjectIdentifier{
-				Key: aws.String(filepath.Join(r.prefix, p)),
+				Key: &key,
 			})
 		}
 		deleteBatch := types.Delete{
@@ -651,6 +655,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	if err != nil {
 		return err
 	}
+	misc.Message("no conflicts found")
 
 	// XXX site tar
 
@@ -721,12 +726,12 @@ func (r *Repo) applyChangesFromRepo(
 	// changes. We ignore ownerships, directory modification times, and special
 	// files.
 	for _, rm := range diffResult.Rm {
-		path := r.localPath(rm).Path()
-		misc.Message("removing %s", path)
+		path := r.localPath(rm.Path).Path()
+		misc.Message("removing %s", rm.Path)
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
-		delete(localDb, rm)
+		delete(localDb, rm.Path)
 	}
 
 	// Make sure files we are changing will be writable. We will set the correct

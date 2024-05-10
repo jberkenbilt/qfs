@@ -25,8 +25,8 @@ import (
 const MetadataKey = "qfs"
 
 var metadataRe = regexp.MustCompile(`^(\d+) (?:([0-7]{4})|->(.+))$`)
-
 var ctx = context.Background()
+var recvMutex sync.Mutex // for local file system changes
 
 type Options func(*S3Source)
 
@@ -340,6 +340,15 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 // If localPath has the same size and modification time as indicated in the repo.
 // The return value indicates whether the file changed.
 func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
+	// Lock a mutex for local file system operations. Unlock the mutex while interacting with S3.
+	recvMutex.Lock()
+	defer recvMutex.Unlock()
+	withUnlocked := func(fn func()) {
+		recvMutex.Unlock()
+		defer recvMutex.Lock()
+		fn()
+	}
+
 	srcPath := fileinfo.NewPath(s, repoPath)
 	destPath := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
 	srcInfo, err := srcPath.FileInfo()
@@ -367,29 +376,34 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	} else if srcInfo.FileType == fileinfo.TypeDirectory {
 		p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
 		info, err := p.FileInfo()
-		created := false
 		if err != nil || info.FileType != fileinfo.TypeDirectory {
 			err = os.RemoveAll(localPath)
 			if err != nil {
 				return false, err
 			}
-			err = os.MkdirAll(localPath, 0777)
-			if err != nil {
-				return false, err
-			}
-			created = true
+		}
+		// Ignore directory times.
+		if info != nil && info.FileType == fileinfo.TypeDirectory && info.Permissions == srcInfo.Permissions {
+			// No action required
+			return false, nil
+		}
+		err = os.MkdirAll(localPath, 0777)
+		if err != nil {
+			return false, err
 		}
 		if err := os.Chmod(localPath, fs.FileMode(srcInfo.Permissions)); err != nil {
 			return false, fmt.Errorf("set mode for %s: %w", localPath, err)
 		}
-		// Ignore directory times.
-		return created, nil
+		return true, nil
 	} else if srcInfo.FileType != fileinfo.TypeFile {
 		// TEST: NOT COVERED. There is no way to represent this, and Store doesn't store
 		// specials.
 		return false, fmt.Errorf("downloading special files is not supported")
 	}
-	requiresCopy, err := fileinfo.RequiresCopy(srcPath, destPath)
+	var requiresCopy bool
+	withUnlocked(func() {
+		requiresCopy, err = fileinfo.RequiresCopy(srcPath, destPath)
+	})
 	if err != nil {
 		return false, err
 	}
@@ -414,7 +428,9 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	_, err = s.downloader.Download(ctx, f, input)
+	withUnlocked(func() {
+		_, err = s.downloader.Download(ctx, f, input)
+	})
 	if err != nil {
 		return false, err
 	}

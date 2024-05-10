@@ -153,8 +153,9 @@ func writeFile(
 	if contents == "" {
 		contents = filename
 	}
-	testutil.Check(t, os.MkdirAll(filepath.Dir(filename), 0777))
-	testutil.Check(t, os.WriteFile(filename, []byte(contents), 0666))
+	_ = os.Chmod(filename, 0o600)
+	testutil.Check(t, os.MkdirAll(filepath.Dir(filename), 0o777))
+	testutil.Check(t, os.WriteFile(filename, []byte(contents), 0o666))
 	testutil.Check(t, os.Chtimes(filename, time.Time{}, time.UnixMilli(modTime)))
 	testutil.Check(t, os.Chmod(filename, fs.FileMode(permissions)))
 }
@@ -383,7 +384,7 @@ func TestS3Source(t *testing.T) {
 	if retrieved {
 		t.Error("shouldn't have retrieved file")
 	}
-	testutil.Check(t, os.WriteFile(destPath.Path(), []byte("something new"), 0666))
+	testutil.Check(t, os.WriteFile(destPath.Path(), []byte("something new"), 0o666))
 	retrieved, err = src.Retrieve("dir1/potato", destPath.Path())
 	if err != nil {
 		t.Error(err.Error())
@@ -505,7 +506,7 @@ func TestLifecycle(t *testing.T) {
 	}
 
 	// Create a directory for a site.
-	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0777))
+	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0o777))
 
 	// Attempt to initialize without a repository configuration.
 	err := qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
@@ -516,7 +517,7 @@ func TestLifecycle(t *testing.T) {
 	// Initialize a repository normally
 
 	// No newline on repo file
-	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0644, "s3://"+TestBucket+"/home")
+	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+TestBucket+"/home")
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
 	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
@@ -567,13 +568,13 @@ func TestLifecycle(t *testing.T) {
 	// points.
 	start := time.Now().Add(-24 * time.Hour).UnixMilli()
 	// No newline on site file
-	writeFile(t, j("site1/.qfs/site"), start, 0644, "site1")
-	writeFile(t, j("site1/.qfs/filters/prune"), start, 0644, `
+	writeFile(t, j("site1/.qfs/site"), start, 0o644, "site1")
+	writeFile(t, j("site1/.qfs/filters/prune"), start, 0o644, `
 :prune:
 junk
 :junk:(~|.junk)$
 `)
-	writeFile(t, j("site1/.qfs/filters/repo"), start, 0644, `
+	writeFile(t, j("site1/.qfs/filters/repo"), start, 0o644, `
 :read:prune
 :exclude:
 */no-sync
@@ -584,7 +585,7 @@ dir3
 dir4
 dir5
 `)
-	writeFile(t, j("site1/.qfs/filters/site1"), start, 0644, `
+	writeFile(t, j("site1/.qfs/filters/site1"), start, 0o644, `
 :read:prune
 :include:
 dir1
@@ -595,24 +596,24 @@ dir3
 	// Create various files and directories for upcoming tests. Passing empty string
 	// as last argument writes the file's path as its contents so every file is
 	// different.
-	writeFile(t, j("site1/dir1/change-in-site1"), start, 0644, "")
-	writeFile(t, j("site1/dir1/file-to-change-and-chmod"), start+1111, 0664, "")
-	writeFile(t, j("site1/dir1/ro-file-to-change"), start+2222, 0444, "")
-	writeFile(t, j("site1/dir1/file-then-dir"), start+3000, 0644, "")
-	writeFile(t, j("site1/dir1/file-then-link"), start+4000, 0644, "")
-	writeFile(t, j("site1/dir1/file-to-chmod"), start+5000, 0644, "")
-	writeFile(t, j("site1/dir1/file-to-remove"), start+6000, 0444, "")
-	writeFile(t, j("site1/dir3/only-in-site1"), start+7000, 0644, "")
-	writeFile(t, j("site1/junk/ignored"), start, 0644, "")
-	testutil.Check(t, os.Mkdir(j("site1/dir2"), 0755))
+	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "")
+	writeFile(t, j("site1/dir1/file-to-change-and-chmod"), start+1111, 0o664, "")
+	writeFile(t, j("site1/dir1/ro-file-to-change"), start+2222, 0o444, "")
+	writeFile(t, j("site1/dir1/file-then-dir"), start+3000, 0o644, "")
+	writeFile(t, j("site1/dir1/file-then-link"), start+4000, 0o644, "")
+	writeFile(t, j("site1/dir1/file-to-chmod"), start+5000, 0o644, "")
+	writeFile(t, j("site1/dir1/file-to-remove"), start+6000, 0o444, "")
+	writeFile(t, j("site1/dir3/only-in-site1"), start+7000, 0o644, "")
+	writeFile(t, j("site1/junk/ignored"), start, 0o644, "")
+	testutil.Check(t, os.Mkdir(j("site1/dir2"), 0o755))
 	testutil.Check(t, os.Symlink("../dir1/change-in-site1", j("site1/dir2/link-to-change")))
 	testutil.Check(t, os.Symlink("replace-with-file", j("site1/dir2/link-then-file")))
 	testutil.Check(t, os.Symlink("replace-with-dir", j("site1/dir2/link-then-directory")))
 	testutil.Check(t, os.Symlink("/dev/null", j("site1/dir2/link-to-remove")))
-	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-then-file"), 0755))
-	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-then-link"), 0755))
-	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-chmod"), 0775))
-	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-remove"), 0555))
+	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-then-file"), 0o755))
+	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-then-link"), 0o755))
+	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-chmod"), 0o775))
+	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-remove"), 0o555))
 
 	testutil.ExpStdout(
 		t,
@@ -620,7 +621,7 @@ dir3
 			misc.TestPromptChannel <- "y" // Continue?
 			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("%v", err)
 			}
 		},
 		// This is lexically sorted, since diff output is sorted, based on the things
@@ -693,7 +694,7 @@ prompt: Continue?
 			misc.TestPromptChannel <- "y" // Continue?
 			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("%v", err)
 			}
 		},
 		"",
@@ -708,7 +709,7 @@ prompt: Continue?
 	})
 
 	// Change file on site1 without pushing -- will be pushed later.
-	writeFile(t, j("site1/dir1/change-in-site1"), start, 0644, "")
+	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "")
 
 	// Pull after push -- no changes expected since the above file is unknown to the repository.
 	testutil.ExpStdout(
@@ -716,7 +717,7 @@ prompt: Continue?
 		func() {
 			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("%v", err)
 			}
 		},
 		"",
@@ -725,19 +726,20 @@ prompt: Continue?
 	checkMessages([]string{
 		"local copy of repository database is current",
 		"loading site database from repository",
+		"no conflicts found",
 		"no changes to pull",
 	})
 
 	// Site up a second site, and do a series of pull. For the first pull, there is no filter in the
 	// repository, so we just get filters. This time, write newlines in the repo and site files.
-	writeFile(t, j("site2/.qfs/repo"), start, 0644, "s3://"+TestBucket+"/home\n")
-	writeFile(t, j("site2/.qfs/site"), start, 0644, "site2\n")
+	writeFile(t, j("site2/.qfs/repo"), start, 0o644, "s3://"+TestBucket+"/home\n")
+	writeFile(t, j("site2/.qfs/site"), start, 0o644, "site2\n")
 	testutil.ExpStdout(
 		t,
 		func() {
 			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("%v", err)
 			}
 		},
 		`add .qfs/filters/prune
@@ -752,6 +754,7 @@ prompt: Continue?
 		"repository doesn't contain a database for this site",
 		"site filter does not exist on the repository; trying local copy",
 		"no filter is configured for this site; bootstrapping with exclude all",
+		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
 		"downloaded .qfs/filters/repo",
@@ -761,7 +764,7 @@ prompt: Continue?
 	})
 
 	// Pull with no repo filter, so local filter is used
-	writeFile(t, j("site2/.qfs/filters/site2"), start, 0644, `
+	writeFile(t, j("site2/.qfs/filters/site2"), start, 0o644, `
 :read:prune
 :include:
 dir1
@@ -775,7 +778,7 @@ dir4
 			misc.TestPromptChannel <- "y" // continue
 			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("pull: %v", err)
 			}
 		},
 		`mkdir dir1
@@ -803,6 +806,7 @@ prompt: Continue?
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"site filter does not exist on the repository; trying local copy",
+		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
 		"downloaded dir1/change-in-site1",
@@ -825,7 +829,7 @@ prompt: Continue?
 		func() {
 			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
 			if err != nil {
-				t.Errorf("push: %v", err)
+				t.Errorf("%v", err)
 			}
 		},
 		"",
@@ -835,32 +839,304 @@ prompt: Continue?
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"site filter does not exist on the repository; trying local copy",
+		"no conflicts found",
 		"no changes to pull",
 	})
 
+	// In the next stage of testing, exercise that changes are carried across.
+	// Advance the timestamps so changes are detected in case the test suite runs
+	// faster than qfs or s3 timestamp granularity. Then make changes relative to the
+	// way things were originally set up. We are making changes in site2 to things
+	// that were originally created in site1.
+	start += 3600000
+	writeFile(t, j("site2/dir1/file-to-change-and-chmod"), start, 0o444, "new contents")
+	writeFile(t, j("site2/dir1/ro-file-to-change"), start, 0o444, "new ro contents")
+	testutil.Check(t, os.Remove(j("site2/dir1/file-then-dir")))
+	testutil.Check(t, os.Mkdir(j("site2/dir1/file-then-dir"), 0o755))
+	testutil.Check(t, os.Remove(j("site2/dir1/file-then-link")))
+	testutil.Check(t, os.Symlink("now a symlink", j("site2/dir1/file-then-link")))
+	testutil.Check(t, os.Chmod(j("site2/dir1/file-to-chmod"), 0o600))
+	testutil.Check(t, os.Remove(j("site2/dir1/file-to-remove")))
+	testutil.Check(t, os.Remove(j("site2/dir2/link-to-change")))
+	testutil.Check(t, os.Symlink("new-target", j("site2/dir2/link-to-change")))
+	testutil.Check(t, os.Remove(j("site2/dir2/link-then-file")))
+	writeFile(t, j("site2/dir2/link-then-file"), start, 0o644, "this is a file now")
+	testutil.Check(t, os.Remove(j("site2/dir2/link-then-directory")))
+	testutil.Check(t, os.Mkdir(j("site2/dir2/link-then-directory"), 0o755))
+	testutil.Check(t, os.Remove(j("site2/dir2/link-to-remove")))
+	testutil.Check(t, os.Remove(j("site2/dir2/dir-then-file")))
+	writeFile(t, j("site2/dir2/dir-then-file"), start, 0o644, "this is a file now")
+	testutil.Check(t, os.Remove(j("site2/dir2/dir-then-link")))
+	testutil.Check(t, os.Symlink("link-now", j("site2/dir2/dir-then-link")))
+	testutil.Check(t, os.Chmod(j("site2/dir2/dir-to-chmod"), 0o750))
+	testutil.Check(t, os.Remove(j("site2/dir2/dir-to-remove")))
+	writeFile(t, j("site2/dir2/new-file"), start, 0o644, "")
+	testutil.Check(t, os.Symlink("new-target", j("site2/dir2/new-link")))
+	testutil.Check(t, os.Mkdir(j("site2/dir2/new-directory"), 0777))
+
+	// Push -n
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`typechange dir1/file-then-dir
+typechange dir1/file-then-link
+typechange dir2/dir-then-file
+typechange dir2/dir-then-link
+typechange dir2/link-then-directory
+typechange dir2/link-then-file
+rm dir1/file-then-dir
+rm dir1/file-then-link
+rm dir1/file-to-remove
+rm dir2/dir-then-file
+rm dir2/dir-then-link
+rm dir2/dir-to-remove
+rm dir2/link-then-directory
+rm dir2/link-then-file
+rm dir2/link-to-remove
+add .qfs/filters/site2
+mkdir dir1/file-then-dir
+add dir1/file-then-link
+add dir2/dir-then-file
+add dir2/dir-then-link
+mkdir dir2/link-then-directory
+add dir2/link-then-file
+mkdir dir2/new-directory
+add dir2/new-file
+add dir2/new-link
+change dir1/file-to-change-and-chmod
+change dir1/ro-file-to-change
+change dir2/link-to-change
+chmod 0600 dir1/file-to-chmod
+chmod 0750 dir2/dir-to-chmod
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+	})
+
+	// Push
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`typechange dir1/file-then-dir
+typechange dir1/file-then-link
+typechange dir2/dir-then-file
+typechange dir2/dir-then-link
+typechange dir2/link-then-directory
+typechange dir2/link-then-file
+rm dir1/file-then-dir
+rm dir1/file-then-link
+rm dir1/file-to-remove
+rm dir2/dir-then-file
+rm dir2/dir-then-link
+rm dir2/dir-to-remove
+rm dir2/link-then-directory
+rm dir2/link-then-file
+rm dir2/link-to-remove
+add .qfs/filters/site2
+mkdir dir1/file-then-dir
+add dir1/file-then-link
+add dir2/dir-then-file
+add dir2/dir-then-link
+mkdir dir2/link-then-directory
+add dir2/link-then-file
+mkdir dir2/new-directory
+add dir2/new-file
+add dir2/new-link
+change dir1/file-to-change-and-chmod
+change dir1/ro-file-to-change
+change dir2/link-to-change
+chmod 0600 dir1/file-to-chmod
+chmod 0750 dir2/dir-to-chmod
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+		"removing dir1/file-then-dir",
+		"removing dir1/file-then-link",
+		"removing dir1/file-to-remove",
+		"removing dir2/dir-then-file",
+		"removing dir2/dir-then-link",
+		"removing dir2/dir-to-remove",
+		"removing dir2/link-then-directory",
+		"removing dir2/link-then-file",
+		"removing dir2/link-to-remove",
+		"storing .qfs/filters/site2",
+		"storing dir1/file-then-dir",
+		"storing dir1/file-then-link",
+		"storing dir2/dir-then-file",
+		"storing dir2/dir-then-link",
+		"storing dir2/link-then-directory",
+		"storing dir2/link-then-file",
+		"storing dir2/new-directory",
+		"storing dir2/new-file",
+		"storing dir2/new-link",
+		"storing dir1/file-to-change-and-chmod",
+		"storing dir1/ro-file-to-change",
+		"storing dir2/link-to-change",
+		"storing dir1/file-to-chmod",
+		"storing dir2/dir-to-chmod",
+		"uploading repository database",
+		"uploading site database",
+	})
+
 	// Change file on site1 but don't push yet
+	start += 3600000
+	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "change in site 1")
 
-	// writeFile(t, j("site1/dir1/change-in-site1"), start, 0644, "")
+	// Pull changes from site1. The file that was changed in site1 is ignored because
+	// we haven't pushed it yet.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`typechange dir1/file-then-dir
+typechange dir1/file-then-link
+typechange dir2/dir-then-file
+typechange dir2/dir-then-link
+typechange dir2/link-then-directory
+typechange dir2/link-then-file
+rm dir1/file-then-dir
+rm dir1/file-then-link
+rm dir1/file-to-remove
+rm dir2/dir-then-file
+rm dir2/dir-then-link
+rm dir2/dir-to-remove
+rm dir2/link-then-directory
+rm dir2/link-then-file
+rm dir2/link-to-remove
+add .qfs/filters/site2
+mkdir dir1/file-then-dir
+add dir1/file-then-link
+add dir2/dir-then-file
+add dir2/dir-then-link
+mkdir dir2/link-then-directory
+add dir2/link-then-file
+mkdir dir2/new-directory
+add dir2/new-file
+add dir2/new-link
+change dir1/file-to-change-and-chmod
+change dir1/ro-file-to-change
+change dir2/link-to-change
+chmod 0600 dir1/file-to-chmod
+chmod 0750 dir2/dir-to-chmod
+`,
+		"",
+	)
+	checkMessages([]string{
+		"downloading latest repository database",
+		"loading site database from repository",
+		"no conflicts found",
+		"----- changes to pull -----",
+		// diff is written to stdout
+		"-----",
+	})
 
-	// writeFile(t, j("site2/dir1/file-to-change-and-chmod"), start, 0664, "")
-	// writeFile(t, j("site2/dir1/ro-file-to-change"), start, 0444, "")
-	// writeFile(t, j("site2/dir1/file-then-dir"), start, 0644, "")
-	// writeFile(t, j("site2/dir1/file-then-link"), start, 0644, "")
-	// writeFile(t, j("site2/dir1/file-to-chmod"), start, 0644, "")
-	// writeFile(t, j("site2/dir1/file-to-remove"), start, 0444, "")
-	// testutil.Check(t, os.Symlink("../dir1/change-in-site2", j("site2/dir2/link-to-change")))
-	// testutil.Check(t, os.Symlink("replace-with-file", j("site2/dir2/link-then-file")))
-	// testutil.Check(t, os.Symlink("replace-with-dir", j("site2/dir2/link-then-directory")))
-	// testutil.Check(t, os.Symlink("/dev/null", j("site2/dir2/link-to-remove")))
-	// testutil.Check(t, os.Mkdir(j("site2/dir2/dir-then-file"), 0755))
-	// testutil.Check(t, os.Mkdir(j("site2/dir2/dir-then-link"), 0755))
-	// testutil.Check(t, os.Mkdir(j("site2/dir2/dir-to-chmod"), 0775))
-	// testutil.Check(t, os.Mkdir(j("site2/dir2/dir-to-remove"), 0555))
-	// create a file
-	// create a link
-	// create a directory
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`typechange dir1/file-then-dir
+typechange dir1/file-then-link
+typechange dir2/dir-then-file
+typechange dir2/dir-then-link
+typechange dir2/link-then-directory
+typechange dir2/link-then-file
+rm dir1/file-then-dir
+rm dir1/file-then-link
+rm dir1/file-to-remove
+rm dir2/dir-then-file
+rm dir2/dir-then-link
+rm dir2/dir-to-remove
+rm dir2/link-then-directory
+rm dir2/link-then-file
+rm dir2/link-to-remove
+add .qfs/filters/site2
+mkdir dir1/file-then-dir
+add dir1/file-then-link
+add dir2/dir-then-file
+add dir2/dir-then-link
+mkdir dir2/link-then-directory
+add dir2/link-then-file
+mkdir dir2/new-directory
+add dir2/new-file
+add dir2/new-link
+change dir1/file-to-change-and-chmod
+change dir1/ro-file-to-change
+change dir2/link-to-change
+chmod 0600 dir1/file-to-chmod
+chmod 0750 dir2/dir-to-chmod
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"downloading latest repository database",
+		"loading site database from repository",
+		"no conflicts found",
+		"----- changes to pull -----",
+		// diff is written to stdout
+		"-----",
+		"removing dir1/file-then-dir",
+		"removing dir1/file-then-link",
+		"removing dir1/file-to-remove",
+		"removing dir2/dir-then-file",
+		"removing dir2/dir-then-link",
+		"removing dir2/dir-to-remove",
+		"removing dir2/link-then-directory",
+		"removing dir2/link-then-file",
+		"removing dir2/link-to-remove",
+		"downloaded .qfs/filters/site2",
+		"downloaded dir1/file-then-link",
+		"downloaded dir2/dir-then-file",
+		"downloaded dir2/dir-then-link",
+		"downloaded dir2/link-then-file",
+		"downloaded dir2/new-file",
+		"downloaded dir2/new-link",
+		"downloaded dir1/file-to-change-and-chmod",
+		"downloaded dir1/ro-file-to-change",
+		"downloaded dir2/link-to-change",
+		"chmod 0600 dir1/file-to-chmod",
+		"chmod 0750 dir2/dir-to-chmod",
+		"updated repository copy of site database to reflect changes",
+	})
 
-	// XXX Change site filter to add something locally. Pull: no changes. Pull -local-filter: see changes.
+	// XXX Change site filter to add something locally. Pull: no changes. Pull
+	// -local-filter: see changes.
 
-	// XXX Diff site1 and site2 with both filters, include .qfs/filters
+	// XXX Diff site1 and site2 with both filters, include .qfs/filters. Expect to
+	// see the file that changed in site1 and was not pushed.
 }
