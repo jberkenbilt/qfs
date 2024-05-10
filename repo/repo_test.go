@@ -514,6 +514,12 @@ func TestLifecycle(t *testing.T) {
 		t.Errorf("expected no repo config: %v", err)
 	}
 
+	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "invalid contents")
+	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	if err == nil || !strings.Contains(err.Error(), "must contain s3://bucket/prefix") {
+		t.Errorf("expected no repo config: %v", err)
+	}
+
 	// Initialize a repository normally
 
 	// No newline on repo file
@@ -527,7 +533,7 @@ func TestLifecycle(t *testing.T) {
 	checkMessages([]string{"uploading repository database"})
 
 	// Re-initialize and abort
-	misc.TestPromptChannel = make(chan string, 1)
+	misc.TestPromptChannel = make(chan string, 5)
 	misc.TestPromptChannel <- "n"
 	testutil.ExpStdout(
 		t,
@@ -1223,5 +1229,271 @@ add dir3/only-in-site1
 		"no changes to pull",
 	})
 
-	// XXX Test conflict detection
+	// Test conflict detection.
+
+	start += 3600000
+	// This file was previously changed on site1. Also change in site2 to create a conflict
+	writeFile(t, j("site2/dir1/change-in-site1"), start, 0o644, "")
+	// Change a file in site1 and then replace the file with a directory on site2.
+	writeFile(t, j("site1/dir2/dir-then-file"), start, 0o644, "modified on site1")
+	// Modify a file on site1; change it (back) to a directory on site2
+	testutil.Check(t, os.Remove(j("site2/dir2/dir-then-file")))
+	testutil.Check(t, os.Mkdir(j("site2/dir2/dir-then-file"), 0755))
+
+	// Both sites can push to the repo and not see conflicts since the repo hasn't
+	// been updated with either site's changes. Start by doing a push -n from site1
+	// to show that there are no conflicts. Then do a full push from site2.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`change dir1/change-in-site1
+change dir2/dir-then-file
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+	})
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`typechange dir2/dir-then-file
+rm dir2/dir-then-file
+mkdir dir2/dir-then-file
+change dir1/change-in-site1
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+		"removing dir2/dir-then-file",
+		"storing dir2/dir-then-file",
+		"storing dir1/change-in-site1",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Now either a push from site1 or a pull to site1 will show conflicts.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site1")})
+			if err == nil || err.Error() != "conflicts detected" {
+				t.Errorf("%v", err)
+			}
+		},
+		`conflict: dir1/change-in-site1
+conflict: dir2/dir-then-file
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"downloading latest repository database",
+	})
+	// Resolve letting repository win
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "n" // conflicts detected
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`conflict: dir1/change-in-site1
+conflict: dir2/dir-then-file
+prompt: Conflicts detected. Exit?
+typechange dir2/dir-then-file
+rm dir2/dir-then-file
+mkdir dir2/dir-then-file
+change dir1/change-in-site1
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"loading site database from repository",
+		"downloading latest repository database",
+		"overriding conflicts",
+		"----- changes to pull -----",
+		"-----",
+		"removing dir2/dir-then-file",
+		"downloaded dir1/change-in-site1",
+		"updated repository copy of site database to reflect changes",
+	})
+
+	// Change a file and do another push from site2 without an intervening pull.
+	writeFile(t, j("site2/dir1/change-in-site1"), start+1000, 0o644, "")
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`change dir1/change-in-site1
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		"-----",
+		"storing dir1/change-in-site1",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Change the same file on site1. A push will show conflicts.
+	writeFile(t, j("site1/dir1/change-in-site1"), start+2000, 0o644, "")
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // conflicts detected
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			if err == nil || err.Error() != "conflicts detected" {
+				t.Errorf("%v", err)
+			}
+		},
+		`conflict: dir1/change-in-site1
+prompt: Conflicts detected. Exit?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"downloading latest repository database",
+	})
+
+	// Push allowing local to override
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "n" // conflicts detected
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`conflict: dir1/change-in-site1
+prompt: Conflicts detected. Exit?
+change dir1/change-in-site1
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"downloading latest repository database",
+		"overriding conflicts",
+		"----- changes to push -----",
+		"-----",
+		"storing dir1/change-in-site1",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Site1 is current
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no conflicts found",
+		"no changes to pull",
+	})
+
+	// Bring site2 back in sync
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`change dir1/change-in-site1
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"loading site database from repository",
+		"downloading latest repository database",
+		"no conflicts found",
+		"----- changes to pull -----",
+		"-----",
+		"downloaded dir1/change-in-site1",
+		"updated repository copy of site database to reflect changes",
+	})
+
+	// Back in sync
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"diff",
+				j("site1"),
+				j("site2"),
+				"-filter",
+				j("site1/.qfs/filters/site1"),
+				"-filter",
+				j("site1/.qfs/filters/site2"),
+				"-no-dir-times",
+			})
+		},
+		"",
+		"",
+	)
+
+	// XXX busy with push, pull
+
+	// XXX say no to continue prompt: push, pull
+
+	// XXX local copy of database is outdated with no changes (push)
+
+	// XXX > 1000 files to delete
+
+	// XXX n to conflict override (pull)
 }

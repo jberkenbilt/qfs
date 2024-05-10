@@ -100,6 +100,7 @@ func (r *Repo) createBusy() error {
 	}
 	_, err := r.s3Client.PutObject(ctx, input)
 	if err != nil {
+		// TEST: NOT COVERED
 		return fmt.Errorf("create \"busy\" object: %w", err)
 	}
 	return nil
@@ -108,6 +109,7 @@ func (r *Repo) createBusy() error {
 func (r *Repo) checkBusy() error {
 	exists, err := r.existsInRepo(repofiles.Busy)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	if exists {
@@ -128,6 +130,7 @@ func (r *Repo) removeBusy() error {
 	}
 	_, err := r.s3Client.DeleteObject(ctx, input)
 	if err != nil {
+		// TEST: NOT COVERED
 		return fmt.Errorf("remove \"busy\" object: %w", err)
 	}
 	return nil
@@ -144,6 +147,7 @@ func (r *Repo) existsInRepo(path string) (bool, error) {
 		if errors.As(err, &notFound) {
 			return false, nil
 		}
+		// TEST: NOT COVERED
 		return false, err
 	}
 	return true, nil
@@ -160,6 +164,7 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 func (r *Repo) Init() error {
 	isInitialized, err := r.IsInitialized()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	if isInitialized {
@@ -175,14 +180,17 @@ func (r *Repo) Init() error {
 
 	err = r.createBusy()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	err = r.traverseAndStore()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	err = r.removeBusy()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	return nil
@@ -191,6 +199,7 @@ func (r *Repo) Init() error {
 func (r *Repo) traverseAndStore() error {
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	tr, err := traverse.New(
@@ -199,25 +208,30 @@ func (r *Repo) traverseAndStore() error {
 		traverse.WithRepoRules(true),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	files, err := tr.Traverse(nil, nil)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	defer func() { _ = files.Close() }()
 	tmpDb := r.localPath(repofiles.TempRepoDb())
 	err = database.WriteDb(tmpDb.Path(), files, database.DbRepo)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	misc.Message("uploading repository database")
 	err = src.Store(tmpDb, repofiles.RepoDb())
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	err = os.Rename(tmpDb.Path(), r.localPath(repofiles.RepoDb()).Path())
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	return nil
@@ -240,6 +254,7 @@ func checkConflicts(
 	for _, ch := range checks {
 		info, err := getInfo(ch.Path)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		if info == nil {
@@ -254,11 +269,13 @@ func checkConflicts(
 			}
 			if conflict {
 				conflicts = true
-				_, _ = fmt.Fprintf(os.Stderr, "%s: conflict: modTime=%v\n", ch.Path, info.ModTime)
+				fmt.Printf("conflict: %s\n", ch.Path)
 			}
 		}
 	}
-	if conflicts && allowOverride && !misc.Prompt("Conflicts detected. Exit?") {
+	if !conflicts {
+		misc.Message("no conflicts found")
+	} else if allowOverride && !misc.Prompt("Conflicts detected. Exit?") {
 		misc.Message("overriding conflicts")
 		conflicts = false
 	}
@@ -293,11 +310,13 @@ func (r *Repo) Push(config *PushConfig) error {
 		database.WithRepoRules(true),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	defer func() { _ = localRepoFiles.Close() }()
 	localRepoDb, err := database.Load(localRepoFiles)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	// Generate the local site database using prunes only from the repo and site filters.
@@ -310,6 +329,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		f := filter.New()
 		err = f.ReadFile(r.localPath(file), true)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		filters = append(filters, f)
@@ -322,21 +342,25 @@ func (r *Repo) Push(config *PushConfig) error {
 		traverse.WithCleanup(config.Cleanup),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	misc.Message("generating local database")
 	localFiles, err := tr.Traverse(nil, nil)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	defer func() { _ = localFiles.Close() }()
 	localDb, err := database.Load(localFiles)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
 	err = database.WriteDb(localSiteDbPath.Path(), localDb, database.DbQfs)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	// Diff against the local copy of the repo database using the same filters but
@@ -346,6 +370,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		f := filter.New()
 		err = f.ReadFile(r.localPath(file), false)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		filters = append(filters, f)
@@ -353,6 +378,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	d := makeDiff(filters)
 	diffResult, err := d.Run(localRepoDb, localDb)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
@@ -360,12 +386,14 @@ func (r *Repo) Push(config *PushConfig) error {
 		// Write diff to a local file as a marker that a push has been run.
 		err = r.SaveDiff(repofiles.Push, diffResult)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 
 	downloadedRepoDb, remoteRepoDb, err := r.loadRepoDb()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
@@ -379,7 +407,6 @@ func (r *Repo) Push(config *PushConfig) error {
 	if err != nil {
 		return err
 	}
-	misc.Message("no conflicts found")
 
 	// XXX Remember LocalTar, LocalSite, SaveSiteTar
 
@@ -402,6 +429,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	// Apply changes to the repository.
 	err = r.createBusy()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
@@ -413,12 +441,14 @@ func (r *Repo) Push(config *PushConfig) error {
 		s3source.WithDatabase(remoteRepoDb),
 	)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
 	if changes {
 		err = r.pushChangesToRepo(src, diffResult)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		// Update the repository database. It would be nice if we could update our
@@ -428,6 +458,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		// database.
 		err = r.traverseAndStore()
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	} else {
@@ -448,10 +479,12 @@ func (r *Repo) Push(config *PushConfig) error {
 	misc.Message("uploading site database")
 	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	err = r.removeBusy()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	return nil
@@ -488,6 +521,7 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 		}
 		_, err := r.s3Client.DeleteObjects(ctx, deleteInput)
 		if err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("delete keys: %w", err)
 		}
 	}
@@ -514,17 +548,20 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 				misc.Message("storing %s", f.Path)
 				err := src.Store(r.localPath(f.Path), f.Path)
 				if err != nil {
+					// TEST: NOT COVERED
 					errorChan <- err
 				}
 			}
 		},
 		func(e error) {
+			// TEST: NOT COVERED
 			allErrors = append(allErrors, e)
 		},
 		c,
 		numWorkers,
 	)
 	if len(allErrors) > 0 {
+		// TEST: NOT COVERED
 		return errors.Join(allErrors...)
 	}
 
@@ -534,14 +571,17 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 func (r *Repo) SaveDiff(path string, diffResult *diff.Result) error {
 	f, err := os.Create(r.localPath(path).Path())
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	defer func() { _ = f.Close() }()
 	err = diffResult.WriteDiff(f, true)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	if err = f.Close(); err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	return nil
@@ -554,16 +594,19 @@ func (r *Repo) Pull(config *PullConfig) error {
 	}
 	site, err := r.currentSite()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	downloadedRepoDb, repoDb, err := r.loadRepoDb()
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
 	// Load the repository copy of the site database. If not found, use an empty database.
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(site))
@@ -574,12 +617,14 @@ func (r *Repo) Pull(config *PullConfig) error {
 		misc.Message("repository doesn't contain a database for this site")
 		siteDb = database.Memory{}
 	} else if err != nil {
+		// TEST: NOT COVERED
 		return err
 	} else {
 		misc.Message("loading site database from repository")
 		defer func() { _ = files.Close() }()
 		siteDb, err = database.Load(files)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
@@ -592,6 +637,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	repoFilterPath := fileinfo.NewPath(src, repofiles.SiteFilter(repofiles.RepoSite))
 	err = repoFilter.ReadFile(repoFilterPath, false)
 	if err != nil {
+		// TEST: NOT COVERED
 		return fmt.Errorf("reading repository copy of repository filter: %w", err)
 	}
 	var siteFilterPath *fileinfo.Path
@@ -614,6 +660,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 				localFilter = true
 			}
 		} else if err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("reading site filter: %w", err)
 		} else {
 			break
@@ -629,6 +676,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	d := makeDiff(filters)
 	diffResult, err := d.Run(siteDb, repoDb)
 	if err != nil {
+		// TEST: NOT COVERED
 		return err
 	}
 
@@ -636,6 +684,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		// Write diff to a local file for reference.
 		err = r.SaveDiff(repofiles.Pull, diffResult)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
@@ -648,6 +697,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 			return nil, nil
 		}
 		if err != nil {
+			// TEST: NOT COVERED
 			return nil, err
 		}
 		return info, nil
@@ -655,7 +705,6 @@ func (r *Repo) Pull(config *PullConfig) error {
 	if err != nil {
 		return err
 	}
-	misc.Message("no conflicts found")
 
 	// XXX site tar
 
@@ -678,16 +727,19 @@ func (r *Repo) Pull(config *PullConfig) error {
 	if changes {
 		err = r.applyChangesFromRepo(src, diffResult, siteDb)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		// Push a modified copy of the site database
 		localSiteFile := r.localPath(repofiles.TempSiteDb(site))
 		err = database.WriteDb(localSiteFile.Path(), siteDb, database.DbQfs)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 		err = src.Store(localSiteFile, repofiles.SiteDb(site))
 		if err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("update site database in repository: %w", err)
 		}
 		misc.Message("updated repository copy of site database to reflect changes")
@@ -699,12 +751,14 @@ func (r *Repo) Pull(config *PullConfig) error {
 			r.localPath(repofiles.RepoDb()).Path(),
 		)
 		if err != nil {
+			// TEST: NOT COVERED
 			return err
 		}
 	}
 
 	err = r.localPath(repofiles.Push).Remove()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// TEST: NOT COVERED
 		return err
 	}
 
@@ -729,6 +783,7 @@ func (r *Repo) applyChangesFromRepo(
 		path := r.localPath(rm.Path).Path()
 		misc.Message("removing %s", rm.Path)
 		if err := os.RemoveAll(path); err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
 		delete(localDb, rm.Path)
@@ -740,6 +795,7 @@ func (r *Repo) applyChangesFromRepo(
 		path := r.localPath(ch.Path)
 		err := os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
 		if err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("%s: make writable: %w", path.Path(), err)
 		}
 	}
@@ -764,6 +820,7 @@ func (r *Repo) applyChangesFromRepo(
 				path := r.localPath(info.Path)
 				downloaded, err := src.Retrieve(info.Path, path.Path())
 				if err != nil {
+					// TEST: NOT COVERED
 					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)
 				}
 				if downloaded && info.FileType != fileinfo.TypeDirectory {
@@ -772,22 +829,26 @@ func (r *Repo) applyChangesFromRepo(
 			}
 		},
 		func(e error) {
+			// TEST: NOT COVERED
 			allErrors = append(allErrors, e)
 		},
 		c,
 		numWorkers,
 	)
 	if len(allErrors) > 0 {
+		// TEST: NOT COVERED
 		return errors.Join(allErrors...)
 	}
 	for _, m := range diffResult.MetaChange {
 		if m.Permissions == nil {
+			// TEST: NOT COVERED -- we don't generate other kinds of changes in diff with sites
 			continue
 		}
 		path := r.localPath(m.Info.Path).Path()
 		misc.Message("chmod %04o %s", *m.Permissions, m.Info.Path)
 		err := os.Chmod(path, os.FileMode(*m.Permissions))
 		if err != nil {
+			// TEST: NOT COVERED
 			return fmt.Errorf("chmod %04o %s: %w", *m.Permissions, path, err)
 		}
 		localDb[m.Info.Path] = m.Info
@@ -799,12 +860,14 @@ func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
 	localPath := r.localPath(repofiles.RepoDb())
 	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
 	if err != nil {
+		// TEST: NOT COVERED
 		return false, nil, err
 	}
 	srcPath := fileinfo.NewPath(src, repofiles.RepoDb())
 	var toLoad *fileinfo.Path
 	requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
 	if err != nil {
+		// TEST: NOT COVERED
 		return false, nil, err
 	}
 	if !requiresCopy {
@@ -818,17 +881,20 @@ func (r *Repo) loadRepoDb() (bool, database.Memory, error) {
 		pending := r.localPath(repofiles.TempRepoDb())
 		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
 		if err != nil {
+			// TEST: NOT COVERED
 			return false, nil, err
 		}
 		toLoad = pending
 	}
 	files, err := database.Open(toLoad, database.WithRepoRules(true))
 	if err != nil {
+		// TEST: NOT COVERED
 		return false, nil, err
 	}
 	defer func() { _ = files.Close() }()
 	db, err := database.Load(files)
 	if err != nil {
+		// TEST: NOT COVERED
 		return false, nil, err
 	}
 	return downloaded, db, nil
