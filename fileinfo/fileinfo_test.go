@@ -3,6 +3,7 @@ package fileinfo_test
 import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/testutil"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestRequiresCopy(t *testing.T) {
 		return filepath.Join(tmp, path)
 	}
 	testutil.Check(t, os.WriteFile(j("one"), []byte("potato"), 0666))
-	local := fileinfo.NewLocal(tmp)
+	local := localsource.New(tmp)
 	srcPath := fileinfo.NewPath(local, "one")
 	x, err := fileinfo.RequiresCopy(srcPath, srcPath)
 	if err != nil {

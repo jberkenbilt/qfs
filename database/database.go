@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/localsource"
 	"golang.org/x/exp/maps"
 	"io"
 	"os"
@@ -55,7 +56,7 @@ const (
 var lenRe = regexp.MustCompile(`^(\d+)(?:/?(\d+))?$`)
 
 func LoadFile(path string, options ...Options) (Database, error) {
-	return Load(fileinfo.NewPath(fileinfo.NewLocal(""), path), options...)
+	return Load(fileinfo.NewPath(localsource.New(""), path), options...)
 }
 
 // Load opens a database. The resulting object is a fileinfo.Provider. You must

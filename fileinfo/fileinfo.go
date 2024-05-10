@@ -47,9 +47,6 @@ type Source interface {
 	DirEntries(path string) ([]DirEntry, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
-	HasStDev() bool
-	IsS3() bool
-	Finish()
 }
 
 type Path struct {

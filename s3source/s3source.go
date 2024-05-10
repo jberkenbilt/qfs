@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/localsource"
 	"io"
 	"io/fs"
 	"os"
@@ -245,14 +246,6 @@ func (s *S3Source) DirEntries(path string) ([]fileinfo.DirEntry, error) {
 	return entries, nil
 }
 
-func (*S3Source) HasStDev() bool {
-	return false
-}
-
-func (*S3Source) IsS3() bool {
-	return true
-}
-
 func (s *S3Source) Open(path string) (io.ReadCloser, error) {
 	key := filepath.Join(s.prefix, path)
 	input := &s3.GetObjectInput{
@@ -350,7 +343,7 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	}
 
 	srcPath := fileinfo.NewPath(s, repoPath)
-	destPath := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
+	destPath := fileinfo.NewPath(localsource.New(""), localPath)
 	srcInfo, err := srcPath.FileInfo()
 	if err != nil {
 		return false, err
@@ -374,7 +367,7 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 		}
 		return true, nil
 	} else if srcInfo.FileType == fileinfo.TypeDirectory {
-		p := fileinfo.NewPath(fileinfo.NewLocal(""), localPath)
+		p := fileinfo.NewPath(localsource.New(""), localPath)
 		info, err := p.FileInfo()
 		if err != nil || info.FileType != fileinfo.TypeDirectory {
 			err = os.RemoveAll(localPath)
