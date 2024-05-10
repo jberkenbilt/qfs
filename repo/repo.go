@@ -593,7 +593,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	siteFilter := filter.New()
 	err = siteFilter.ReadFile(siteFilterPath, false)
 	if errors.As(err, &nsk) {
-		misc.Message("site filter does not exist on the repository; trying locally")
+		misc.Message("site filter does not exist on the repository; trying local copy")
 		siteFilterPath = r.localPath(repofiles.SiteFilter(site))
 		err = siteFilter.ReadFile(siteFilterPath, false)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -675,7 +675,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		if err != nil {
 			return fmt.Errorf("update site database in repository: %w", err)
 		}
-		misc.Message("updated repository copy of site database to reflect changes    ")
+		misc.Message("updated repository copy of site database to reflect changes")
 	}
 
 	if downloadedRepoDb {
@@ -734,9 +734,11 @@ func (r *Repo) applyChangesFromRepo(
 	var allErrors []error
 	go func() {
 		for _, info := range diffResult.Add {
+			localDb[info.Path] = info
 			c <- info
 		}
 		for _, info := range diffResult.Change {
+			localDb[info.Path] = info
 			c <- info
 		}
 		close(c)
@@ -749,10 +751,9 @@ func (r *Repo) applyChangesFromRepo(
 				if err != nil {
 					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)
 				}
-				if downloaded {
+				if downloaded && info.FileType != fileinfo.TypeDirectory {
 					misc.Message("downloaded %s", info.Path)
 				}
-				localDb[info.Path] = info
 			}
 		},
 		func(e error) {

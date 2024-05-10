@@ -45,16 +45,16 @@ func DoConcurrently[T any, errorT any](
 
 // Prompt asks a yes/no question. It appends ` [y/n] ` to the prompt.
 func Prompt(prompt string) bool {
-	fmt.Printf("%s [y/n] ", prompt)
 	var answer string
 	if TestPromptChannel != nil {
-		fmt.Println("")
+		fmt.Printf("prompt: %s\n", prompt)
 		select {
 		case answer = <-TestPromptChannel:
 		default:
 			panic("prompt called with empty TestPromptChannel: " + prompt)
 		}
 	} else {
+		fmt.Printf("%s [y/n] ", prompt)
 		_, _ = fmt.Scanln(&answer)
 	}
 	return answer == "y"
@@ -64,11 +64,7 @@ func Prompt(prompt string) bool {
 // passed in, then writes it standard output.
 func Message(format string, args ...any) {
 	if TestMessageChannel != nil {
-		select {
-		case TestMessageChannel <- fmt.Sprintf(format, args...):
-		default:
-			panic("message called with full TestMessageChannel")
-		}
+		TestMessageChannel <- fmt.Sprintf(format, args...)
 	} else {
 		fmt.Printf("%s: %s\n", progName, fmt.Sprintf(format, args...))
 	}

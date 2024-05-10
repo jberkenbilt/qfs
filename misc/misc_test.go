@@ -84,26 +84,8 @@ func TestBlockedPrompt(t *testing.T) {
 	if !strings.Contains(panicMessage, "empty") {
 		t.Errorf("wrong message: %v", panicMessage)
 	}
-	if string(stdout) != "Potato? [y/n] \n" {
+	if string(stdout) != "prompt: Potato?\n" {
 		t.Errorf("didn't see prompt: |%s|", stdout)
-	}
-}
-
-func TestBlockedMessage(t *testing.T) {
-	defer func() {
-		misc.TestMessageChannel = nil
-	}()
-	var panicMessage string
-	func() {
-		defer func() {
-			panicMessage = recover().(string)
-		}()
-		misc.TestMessageChannel = make(chan string)
-		misc.Message("potato")
-		t.Errorf("didn't panic")
-	}()
-	if !strings.Contains(panicMessage, "full") {
-		t.Errorf("wrong message: %v", panicMessage)
 	}
 }
 
@@ -124,7 +106,7 @@ func TestMessagePromptChannels(t *testing.T) {
 			t.Errorf("message didn't work: |%s|", m)
 		}
 	})
-	if string(stdout) != "Moo? [y/n] \n" {
+	if string(stdout) != "prompt: Moo?\n" {
 		t.Errorf("wrong output: %s", stdout)
 	}
 }
