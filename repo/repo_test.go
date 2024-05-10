@@ -1154,8 +1154,74 @@ prompt: Continue?
 		"",
 	)
 
-	// XXX Change site filter to add something locally. Pull: no changes. Pull
-	// -local-filter: see changes.
+	// Change the site filter for site2 to include previously excluded dir3. A
+	// regular pull doesn't pull it, but a pull with -local-filter does.
+	testutil.Check(t, os.Rename(j("site2/.qfs/filters/site2"), j("site2/.qfs/filters/site2.off")))
+	writeFile(t, j("site2/.qfs/filters/site2"), start, 0o644, `
+:read:prune
+:include:
+dir1
+dir2
+dir3
+`)
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no conflicts found",
+		"no changes to pull",
+	})
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site2"), "-local-filter"})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`mkdir dir3
+add dir3/only-in-site1
+`,
+		"",
+	)
+	checkMessages([]string{
+		"loading site database from repository",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to pull -----",
+		// diff is written to stdout
+		"-----",
+	})
+	// Set things back as they were
+	testutil.Check(t, os.Rename(j("site2/.qfs/filters/site2.off"), j("site2/.qfs/filters/site2")))
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no conflicts found",
+		"no changes to pull",
+	})
 
 	// XXX Test conflict detection
 }
