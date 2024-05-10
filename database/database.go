@@ -210,9 +210,6 @@ func (ld *Loader) getRow() ([]byte, error) {
 }
 
 func (ld *Loader) forEachRow(fn func(*fileinfo.FileInfo) error) error {
-	if ld.lastRow != nil {
-		panic("ForEach called on database that's already been read")
-	}
 	for {
 		data, err := ld.getRow()
 		if err != nil {

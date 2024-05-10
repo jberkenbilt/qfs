@@ -9,7 +9,7 @@ import (
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
-	"github.com/jberkenbilt/qfs/repo"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/scan"
 	"os"
 	"path/filepath"
@@ -270,7 +270,7 @@ func argFilter(p *parser, arg string) error {
 	filename := p.args[p.arg]
 	p.arg++
 	f := filter.New()
-	err := f.ReadFile(fileinfo.NewPath(fileinfo.NewLocal(""), filename), pruneOnly)
+	err := f.ReadFile(fileinfo.NewPath(localsource.New(""), filename), pruneOnly)
 	if err != nil {
 		return err
 	}
@@ -355,11 +355,10 @@ func (p *parser) doScan() error {
 	if err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
-	defer func() { _ = files.Close() }()
 	if p.db != "" {
 		return database.WriteDb(p.db, files, database.DbQfs)
 	}
-	return fileinfo.PrintDb(files, p.long)
+	return files.Print(p.long)
 }
 
 func (p *parser) doDiff() error {
@@ -383,48 +382,48 @@ func (p *parser) doDiff() error {
 	return nil
 }
 
-func (p *parser) doInitRepo() error {
-	r, err := repo.New(
-		repo.WithLocalTop(p.top),
-		repo.WithS3Client(S3Client),
-	)
-	if err != nil {
-		return err
-	}
-	return r.Init()
-}
-
-func (p *parser) doPull() error {
-	r, err := repo.New(
-		repo.WithLocalTop(p.top),
-		repo.WithS3Client(S3Client),
-	)
-	if err != nil {
-		return err
-	}
-	return r.Pull(&repo.PullConfig{
-		NoOp:        p.noOp,
-		LocalFilter: p.localFilter,
-		SiteTar:     "", // XXX
-	})
-}
-
-func (p *parser) doPush() error {
-	r, err := repo.New(
-		repo.WithLocalTop(p.top),
-		repo.WithS3Client(S3Client),
-	)
-	if err != nil {
-		return err
-	}
-	return r.Push(&repo.PushConfig{
-		Cleanup:     p.cleanup,
-		NoOp:        p.noOp,
-		LocalTar:    "", // XXX
-		SaveSite:    "", // XXX
-		SaveSiteTar: "", // XXX
-	})
-}
+//func (p *parser) doInitRepo() error {
+//	r, err := repo.New(
+//		repo.WithLocalTop(p.top),
+//		repo.WithS3Client(S3Client),
+//	)
+//	if err != nil {
+//		return err
+//	}
+//	return r.Init()
+//}
+//
+//func (p *parser) doPull() error {
+//	r, err := repo.New(
+//		repo.WithLocalTop(p.top),
+//		repo.WithS3Client(S3Client),
+//	)
+//	if err != nil {
+//		return err
+//	}
+//	return r.Pull(&repo.PullConfig{
+//		NoOp:        p.noOp,
+//		LocalFilter: p.localFilter,
+//		SiteTar:     "", // XXX
+//	})
+//}
+//
+//func (p *parser) doPush() error {
+//	r, err := repo.New(
+//		repo.WithLocalTop(p.top),
+//		repo.WithS3Client(S3Client),
+//	)
+//	if err != nil {
+//		return err
+//	}
+//	return r.Push(&repo.PushConfig{
+//		Cleanup:     p.cleanup,
+//		NoOp:        p.noOp,
+//		LocalTar:    "", // XXX
+//		SaveSite:    "", // XXX
+//		SaveSiteTar: "", // XXX
+//	})
+//}
 
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -456,11 +455,11 @@ func Run(args []string) error {
 	case actDiff:
 		return p.doDiff()
 	case actInitRepo:
-		return p.doInitRepo()
+		//return p.doInitRepo()
 	case actPush:
-		return p.doPush()
+		//return p.doPush()
 	case actPull:
-		return p.doPull()
+		//return p.doPull()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil
