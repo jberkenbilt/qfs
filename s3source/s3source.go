@@ -37,6 +37,7 @@ type S3Source struct {
 	downloader *manager.Downloader
 	bucket     string
 	prefix     string
+	repoRules  bool
 	// Everything below requires mutex protection.
 	m         sync.Mutex
 	modTimes  map[string]time.Time
@@ -78,6 +79,12 @@ func WithDatabase(db database.Database) func(*S3Source) {
 	return func(s *S3Source) {
 		s.db = db
 		s.seen = map[string]struct{}{}
+	}
+}
+
+func WithRepoRules(repoRules bool) func(*S3Source) {
+	return func(s *S3Source) {
+		s.repoRules = repoRules
 	}
 }
 
@@ -453,4 +460,8 @@ func (s *S3Source) Finish() {
 			}
 		}
 	}
+}
+
+func (s *S3Source) Database() (database.Database, error) {
+	return nil, nil // XXX
 }

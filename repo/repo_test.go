@@ -10,6 +10,7 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/gztar"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/qfs"
 	"github.com/jberkenbilt/qfs/repo"
@@ -17,7 +18,6 @@ import (
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
-	"github.com/jberkenbilt/qfs/traverse"
 	"io"
 	"io/fs"
 	"os"
@@ -164,7 +164,7 @@ func TestS3Source(t *testing.T) {
 	setUpTestBucket()
 	tmp := t.TempDir()
 	j := func(path string) *fileinfo.Path {
-		return fileinfo.NewPath(fileinfo.NewLocal(tmp), path)
+		return fileinfo.NewPath(localsource.New(tmp), path)
 	}
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
 	testutil.Check(t, err)
@@ -204,11 +204,11 @@ func TestS3Source(t *testing.T) {
 	}
 
 	// Store errors
-	err = src.Store(fileinfo.NewPath(fileinfo.NewLocal(""), "/nope"), "nope")
+	err = src.Store(fileinfo.NewPath(localsource.New(""), "/nope"), "nope")
 	if err == nil || !strings.Contains(err.Error(), "/nope") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = src.Store(fileinfo.NewPath(fileinfo.NewLocal(""), "/dev/null"), "nope")
+	err = src.Store(fileinfo.NewPath(localsource.New(""), "/dev/null"), "nope")
 	if err == nil || !strings.Contains(err.Error(), "can only store files") {
 		t.Errorf("wrong error: %v", err)
 	}
@@ -228,24 +228,7 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong size: %v", *headOutput.ContentLength)
 	}
 
-	doTraverse := func(src fileinfo.Source) fileinfo.Provider {
-		t.Helper()
-		tr, err := traverse.New("", traverse.WithSource(src))
-		testutil.Check(t, err)
-		files, err := tr.Traverse(
-			func(s string) {
-				t.Errorf("notify: %v", s)
-			},
-			func(err error) {
-				t.Errorf("error: %v", err)
-			},
-		)
-		testutil.Check(t, err)
-		return files
-	}
-
-	files := doTraverse(src)
-	mem1, err := database.Load(files)
+	mem1, err := src.Database()
 	testutil.Check(t, err)
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3").Path(), mem1, database.DbQfs))
 	testutil.Check(t, database.WriteDb(j("repo-from-s3").Path(), mem1, database.DbRepo))
@@ -270,32 +253,30 @@ func TestS3Source(t *testing.T) {
 
 	// Traverse again with the reference database. We should get 100% cache hits.
 	src = makeSrc(mem1)
-	files = doTraverse(src)
-	mem2, _ := database.Load(files)
+	mem2, _ := src.Database()
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("databases are inconsistent")
-		_ = fileinfo.PrintDb(mem1, true)
+		_ = mem1.Print(true)
 		fmt.Println("---")
-		_ = fileinfo.PrintDb(mem2, true)
+		_ = mem2.Print(true)
 	}
 	// Modify the database and make sure gets back in sync
 	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
 	delete(mem2, "file1")
 	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
 	src = makeSrc(mem2)
-	files = doTraverse(src)
+	mem3, _ := src.Database()
 	if !src.DbChanged() {
 		t.Errorf("db didn't change")
 	}
-	mem3, _ := database.Load(files)
 	o1, _ := testutil.WithStdout(func() {
-		_ = fileinfo.PrintDb(mem1, true)
+		_ = mem1.Print(true)
 	})
 	o2, _ := testutil.WithStdout(func() {
-		_ = fileinfo.PrintDb(mem2, true)
+		_ = mem2.Print(true)
 	})
 	o3, _ := testutil.WithStdout(func() {
-		_ = fileinfo.PrintDb(mem3, true)
+		_ = mem3.Print(true)
 	})
 	if !slices.Equal(o1, o3) {
 		t.Errorf("new result doesn't match old result")
@@ -311,7 +292,7 @@ func TestS3Source(t *testing.T) {
 	// Remove is idempotent, so no error to do it again.
 	testutil.Check(t, src.Remove("file1"))
 	src = makeSrc(mem2)
-	_ = doTraverse(src)
+	_, _ = src.Database()
 	if src.DbChanged() {
 		t.Errorf("db changed")
 	}
@@ -354,24 +335,23 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong precondition")
 	}
 	testutil.Check(t, src.Remove("dir1/"))
-	files = doTraverse(src)
+	mem2, _ = src.Database()
 	if _, ok := mem1["dir1"]; ok {
 		t.Errorf("stil there")
 	}
 	if _, ok := mem1["dir1/potato"]; !ok {
 		t.Errorf("descendents are missing")
 	}
-	mem2, _ = database.Load(files)
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("unexpected results")
-		_ = fileinfo.PrintDb(files, true)
+		_ = mem1.Print(true)
 		fmt.Println("---")
-		_ = fileinfo.PrintDb(mem1, true)
+		_ = mem2.Print(true)
 	}
 
 	// Exercise retrieval
 	srcPath := fileinfo.NewPath(src, "dir1/potato")
-	destPath := fileinfo.NewPath(fileinfo.NewLocal(tmp), "files/dir1/potato")
+	destPath := fileinfo.NewPath(localsource.New(tmp), "files/dir1/potato")
 	if x, err := fileinfo.RequiresCopy(srcPath, destPath); err != nil {
 		t.Fatalf(err.Error())
 	} else if x {
@@ -406,15 +386,9 @@ func TestS3Source(t *testing.T) {
 	// Test reading the database from S3
 	testutil.Check(t, src.Store(j("repo-from-s3"), "repo-db"))
 	s3Path := fileinfo.NewPath(src, "repo-db")
-	dbFromS3, err := database.Open(s3Path)
+	mem1, err = database.Load(s3Path)
 	testutil.Check(t, err)
-	defer func() { _ = dbFromS3.Close() }()
-	dbFromDisk, err := database.OpenFile(j("repo-from-s3").Path())
-	testutil.Check(t, err)
-	defer func() { _ = dbFromDisk.Close() }()
-	mem1, err = database.Load(dbFromS3)
-	testutil.Check(t, err)
-	mem2, err = database.Load(dbFromDisk)
+	mem2, err = database.LoadFile(j("repo-from-s3").Path())
 	testutil.Check(t, err)
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("inconsistent results")
@@ -1479,7 +1453,7 @@ prompt: Conflicts detected. Exit?
 	)
 	testutil.Check(t, err)
 	testutil.Check(t, src.Store(
-		fileinfo.NewPath(fileinfo.NewLocal(tmp), "site1/dir1/change-in-site1"),
+		fileinfo.NewPath(localsource.New(tmp), "site1/dir1/change-in-site1"),
 		".qfs/busy",
 	))
 	testutil.ExpStdout(
@@ -1546,7 +1520,7 @@ prompt: Continue?
 
 	// Pull with busy file
 	testutil.Check(t, src.Store(
-		fileinfo.NewPath(fileinfo.NewLocal(tmp), "site1/dir1/change-in-site1"),
+		fileinfo.NewPath(localsource.New(tmp), "site1/dir1/change-in-site1"),
 		".qfs/busy",
 	))
 	testutil.ExpStdout(

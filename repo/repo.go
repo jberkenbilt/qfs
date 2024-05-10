@@ -13,6 +13,7 @@ import (
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3source"
@@ -163,7 +164,7 @@ func (r *Repo) IsInitialized() (bool, error) {
 }
 
 func (r *Repo) localPath(relPath string) *fileinfo.Path {
-	return fileinfo.NewPath(fileinfo.NewLocal(r.localTop), relPath)
+	return fileinfo.NewPath(localsource.New(r.localTop), relPath)
 }
 
 func (r *Repo) Init() error {
@@ -202,26 +203,16 @@ func (r *Repo) Init() error {
 }
 
 func (r *Repo) traverseAndStore() error {
-	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
+	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client), s3source.WithRepoRules(true))
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
-	tr, err := traverse.New(
-		"",
-		traverse.WithSource(src),
-		traverse.WithRepoRules(true),
-	)
+	files, err := src.Database()
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
-	files, err := tr.Traverse(nil, nil)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	defer func() { _ = files.Close() }()
 	tmpDb := r.localPath(repofiles.TempRepoDb())
 	err = database.WriteDb(tmpDb.Path(), files, database.DbRepo)
 	if err != nil {
@@ -310,16 +301,10 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 	// Open the local copy of the repo database early
-	localRepoFiles, err := database.Open(
+	localRepoDb, err := database.Load(
 		r.localPath(repofiles.RepoDb()),
 		database.WithRepoRules(true),
 	)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	defer func() { _ = localRepoFiles.Close() }()
-	localRepoDb, err := database.Load(localRepoFiles)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -351,17 +336,12 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 	misc.Message("generating local database")
-	localFiles, err := tr.Traverse(nil, nil)
+	localResult, err := tr.Traverse(nil, nil)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
-	defer func() { _ = localFiles.Close() }()
-	localDb, err := database.Load(localFiles)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
+	localDb := localResult.Database()
 	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
 	err = database.WriteDb(localSiteDbPath.Path(), localDb, database.DbQfs)
 	if err != nil {
@@ -615,7 +595,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		return err
 	}
 	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(site))
-	files, err := database.Open(repoSiteDbPath, database.WithRepoRules(true))
+	files, err := database.Load(repoSiteDbPath, database.WithRepoRules(true))
 	var siteDb database.Database
 	var nsk *types.NoSuchKey
 	if errors.As(err, &nsk) {
@@ -626,12 +606,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		return err
 	} else {
 		misc.Message("loading site database from repository")
-		defer func() { _ = files.Close() }()
-		siteDb, err = database.Load(files)
-		if err != nil {
-			// TEST: NOT COVERED
-			return err
-		}
+		siteDb = files
 	}
 
 	// Load filters from the repository. If the site filter doesn't exist on the
@@ -695,7 +670,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	}
 
 	// Check conflicts
-	localSrc := fileinfo.NewLocal(r.localTop)
+	localSrc := localsource.New(r.localTop)
 	err = checkConflicts(diffResult.Check, !config.NoOp, func(path string) (*fileinfo.FileInfo, error) {
 		info, err := localSrc.FileInfo(path)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -891,13 +866,7 @@ func (r *Repo) loadRepoDb() (bool, database.Database, error) {
 		}
 		toLoad = pending
 	}
-	files, err := database.Open(toLoad, database.WithRepoRules(true))
-	if err != nil {
-		// TEST: NOT COVERED
-		return false, nil, err
-	}
-	defer func() { _ = files.Close() }()
-	db, err := database.Load(files)
+	db, err := database.Load(toLoad, database.WithRepoRules(true))
 	if err != nil {
 		// TEST: NOT COVERED
 		return false, nil, err

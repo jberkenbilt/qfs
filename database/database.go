@@ -26,10 +26,6 @@ var CurGid = os.Getgid()
 
 type Options func(*Loader)
 
-type Provider interface {
-	Database() (Database, error)
-}
-
 type Loader struct {
 	path       *fileinfo.Path
 	format     DbFormat

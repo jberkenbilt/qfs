@@ -82,7 +82,7 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	all, _ := files.Database()
+	all := files.Database()
 	keys := maps.Keys(all)
 	sort.Strings(keys)
 	expKeys := []string{
@@ -146,7 +146,7 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	all, _ = files.Database()
+	all = files.Database()
 	keys = maps.Keys(all)
 	sort.Strings(keys)
 	expKeys = []string{
@@ -181,7 +181,7 @@ func TestTraverse(t *testing.T) {
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
-	all, _ = files.Database()
+	all = files.Database()
 	keys = maps.Keys(all)
 	sort.Strings(keys)
 	expKeys = []string{
@@ -215,7 +215,7 @@ func TestDevices(t *testing.T) {
 		}
 		foundChar := false
 		foundBlock := false
-		db, _ := files.Database()
+		db := files.Database()
 		for _, f := range db {
 			if f.FileType == fileinfo.TypeCharDev {
 				foundChar = true
@@ -297,7 +297,7 @@ func TestFilterInteraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traverse failed: %v", err)
 	}
-	allFiles, _ := files.Database()
+	allFiles := files.Database()
 	paths := maps.Keys(allFiles)
 	expPaths := []string{
 		"one/two",
@@ -311,7 +311,7 @@ func TestFilterInteraction(t *testing.T) {
 	sort.Strings(expPaths)
 	sort.Strings(expMessages)
 	sort.Strings(messages)
-	// Paths wil already be sorted.
+	sort.Strings(paths)
 	if !slices.Equal(paths, expPaths) {
 		t.Errorf("wrong paths: %#v", paths)
 	}

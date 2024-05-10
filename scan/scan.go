@@ -84,7 +84,7 @@ func (s *Scan) Run() (database.Database, error) {
 		if err != nil {
 			return nil, err
 		}
-		return result.Database()
+		return result.Database(), nil
 	} else {
 		return database.LoadFile(
 			s.input,

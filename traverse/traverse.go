@@ -274,8 +274,8 @@ func (tr *Traverser) Traverse(
 
 // Database traverses the traversal result and calls the function for each item
 // in lexical order. If the function returns an error, traversal is stopped, and
-// the error is returned. This implements the database.Provider interface.
-func (r *Result) Database() (database.Database, error) {
+// the error is returned.
+func (r *Result) Database() database.Database {
 	db := database.Database{}
 	q := list.New()
 	q.PushFront(r.tree)
@@ -294,5 +294,5 @@ func (r *Result) Database() (database.Database, error) {
 			q.PushFront(cur.children[n-i-1])
 		}
 	}
-	return db, nil
+	return db
 }
