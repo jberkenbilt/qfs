@@ -537,7 +537,7 @@ func TestLifecycle(t *testing.T) {
 				t.Errorf("wrong error: %v", err)
 			}
 		},
-		"Repository is already initialized. Rebuild database?",
+		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
 	checkMessages(nil)
@@ -552,7 +552,7 @@ func TestLifecycle(t *testing.T) {
 				t.Errorf("error: %v", err)
 			}
 		},
-		"Repository is already initialized. Rebuild database?",
+		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
 	checkMessages([]string{"uploading repository database"})
