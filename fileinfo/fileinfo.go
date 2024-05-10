@@ -44,7 +44,6 @@ type DirEntry struct {
 type Source interface {
 	FullPath(path string) string
 	FileInfo(path string) (*FileInfo, error)
-	DirEntries(path string) ([]DirEntry, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
 }
@@ -67,10 +66,6 @@ func (p *Path) Path() string {
 
 func (p *Path) FileInfo() (*FileInfo, error) {
 	return p.source.FileInfo(p.path)
-}
-
-func (p *Path) DirEntries() ([]DirEntry, error) {
-	return p.source.DirEntries(p.path)
 }
 
 func (p *Path) Open() (io.ReadCloser, error) {

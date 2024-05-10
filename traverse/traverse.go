@@ -89,7 +89,7 @@ func (tr *Traverser) getNode(node *treeNode) error {
 			skip = true
 		}
 		if !skip {
-			entries, err := path.DirEntries()
+			entries, err := tr.fs.DirEntries(node.path)
 			if err != nil {
 				return fmt.Errorf("read dir %s: %w", path.Path(), err)
 			}
