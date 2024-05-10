@@ -72,6 +72,15 @@ for i in all:
 ```
 
 * TO DO
+  * Document how to remove things. Removing something from a filter causes it to be untracked, not
+    to disappear. So
+    * If you remove a tracked directory and push/pull, it disappears
+    * If you remove something from a filter and push/pull, it stays
+    * If you pushed/pulled something by mistake and remove it from the filter, you have to manually
+      remove it.
+    * We could either add a `repo-rm` or document that you have to remove the files from s3
+      (including the directory marker) and re-initialize. Alternatively, push the filter change and
+      then run `clean-repo`.
   * implement lifecycle test on what's there so far
   * local-tar
   * clean-repo
@@ -296,6 +305,7 @@ qfs subcommand [options]
 * `pull`
   * See [Sites](#sites)
   * `-n` -- perform conflict checking but make no changes
+  * `-local-filter` -- use the local filter; useful for pulling after a filter change
   * `-site-file file.tar.gz` -- use the specified tar file as a source of files that would be
     pulled. This is the file created by `push -save-site`.
 * `push-db` -- regenerate local db and push to repository
@@ -692,7 +702,10 @@ Run `qfs pull`. This does the following:
 * Download the repository's copy of its own database to `.qfs/db/repo.tmp`
 * Read the repository's copy of the current site's database into memory, and diff it against the
   repository's copy of its own database (which we just downloaded) using the repository's copies of
-  the global filter and the site's filter. For bootstrapping to work:
+  the global filter and the site's filter. If `-local-filter` was given, use the local filter
+  instead of the repository filter. This is useful if you modify the filter to include
+  previously-excluded items that are present on the repository and want to pull again to download
+  them. For bootstrapping to work:
   * If the repository doesn't have a copy of the site's database, treat it as empty.
   * If the repository doesn't have a copy of the site's filter, check locally. If there is no local
     filter either, then treat the filter as one that excludes everything, which means only the

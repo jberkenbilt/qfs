@@ -38,6 +38,7 @@ type parser struct {
 	noOwnerships  bool
 	checks        bool
 	noOp          bool
+	localFilter   bool
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -100,8 +101,9 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"n":       argNoOp,
 		},
 		actPull: {
-			"top": argTop,
-			"n":   argNoOp,
+			"top":          argTop,
+			"n":            argNoOp,
+			"local-filter": argLocalFilter,
 		},
 	}
 	for _, i := range []actionKey{actScan, actDiff} {
@@ -131,153 +133,158 @@ func (p *parser) check() error {
 	return nil
 }
 
-func argHelp(q *parser, _ string) error {
+func argHelp(p *parser, _ string) error {
 	fmt.Printf(`
 Usage: %s
 
 XXX -- generate usage and also shell completion
 
 `,
-		q.progName,
+		p.progName,
 	)
 	os.Exit(0)
 	return nil
 }
 
-func argVersion(q *parser, _ string) error {
-	fmt.Printf("%s version %s\n", q.progName, Version)
+func argVersion(p *parser, _ string) error {
+	fmt.Printf("%s version %s\n", p.progName, Version)
 	os.Exit(0)
 	return nil
 }
 
-func argTop(q *parser, arg string) error {
-	if q.arg >= len(q.args) {
+func argTop(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
-	q.top = q.args[q.arg]
-	q.arg++
+	p.top = p.args[p.arg]
+	p.arg++
 	return nil
 }
 
-func argSubcommand(q *parser, arg string) error {
+func argSubcommand(p *parser, arg string) error {
 	switch arg {
 	case "scan":
-		q.action = actScan
+		p.action = actScan
 	case "diff":
-		q.action = actDiff
+		p.action = actDiff
 	case "init-repo":
-		q.action = actInitRepo
+		p.action = actInitRepo
 	case "push":
-		q.action = actPush
+		p.action = actPush
 	case "pull":
-		q.action = actPull
+		p.action = actPull
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
 	return nil
 }
 
-func argFilesOnly(q *parser, _ string) error {
-	q.filesOnly = true
+func argFilesOnly(p *parser, _ string) error {
+	p.filesOnly = true
 	return nil
 }
 
-func argNoSpecial(q *parser, _ string) error {
-	q.noSpecial = true
+func argNoSpecial(p *parser, _ string) error {
+	p.noSpecial = true
 	return nil
 }
 
-func argNoDirTimes(q *parser, _ string) error {
-	q.noDirTimes = true
+func argNoDirTimes(p *parser, _ string) error {
+	p.noDirTimes = true
 	return nil
 }
 
-func argNoOwnerships(q *parser, _ string) error {
-	q.noOwnerships = true
+func argNoOwnerships(p *parser, _ string) error {
+	p.noOwnerships = true
 	return nil
 }
 
-func argChecks(q *parser, _ string) error {
-	q.checks = true
+func argChecks(p *parser, _ string) error {
+	p.checks = true
 	return nil
 }
 
-func argScanPositional(q *parser, arg string) error {
-	if q.input1 != "" {
+func argScanPositional(p *parser, arg string) error {
+	if p.input1 != "" {
 		return fmt.Errorf("at argument \"%s\": an input has already been specified", arg)
 	}
-	q.input1 = arg
+	p.input1 = arg
 	return nil
 }
 
-func argDiffPositional(q *parser, arg string) error {
-	if q.input2 != "" {
+func argDiffPositional(p *parser, arg string) error {
+	if p.input2 != "" {
 		return fmt.Errorf("at argument \"%s\": inputs have already been specified", arg)
 	}
-	if q.input1 != "" {
-		q.input2 = arg
+	if p.input1 != "" {
+		p.input2 = arg
 	} else {
-		q.input1 = arg
+		p.input1 = arg
 	}
 	return nil
 }
 
-func argDb(q *parser, arg string) error {
-	if q.arg >= len(q.args) {
+func argDb(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
 	// If specified multiple times, later overrides earlier.
-	q.db = q.args[q.arg]
-	q.arg++
+	p.db = p.args[p.arg]
+	p.arg++
 	return nil
 }
 
-func argLong(q *parser, _ string) error {
-	q.long = true
+func argLong(p *parser, _ string) error {
+	p.long = true
 	return nil
 }
 
-func argCleanup(q *parser, _ string) error {
-	q.cleanup = true
+func argCleanup(p *parser, _ string) error {
+	p.cleanup = true
 	return nil
 }
 
-func argNoOp(q *parser, _ string) error {
-	q.noOp = true
+func argNoOp(p *parser, _ string) error {
+	p.noOp = true
 	return nil
 }
 
-func argXDev(q *parser, _ string) error {
-	q.sameDev = true
+func argLocalFilter(p *parser, _ string) error {
+	p.localFilter = true
 	return nil
 }
 
-func argFilter(q *parser, arg string) error {
-	if q.arg >= len(q.args) {
+func argXDev(p *parser, _ string) error {
+	p.sameDev = true
+	return nil
+}
+
+func argFilter(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
 	pruneOnly := false
 	if arg == "filter-prune" {
 		pruneOnly = true
 	}
-	filename := q.args[q.arg]
-	q.arg++
+	filename := p.args[p.arg]
+	p.arg++
 	f := filter.New()
 	err := f.ReadFile(fileinfo.NewPath(fileinfo.NewLocal(""), filename), pruneOnly)
 	if err != nil {
 		return err
 	}
-	q.filters = append(q.filters, f)
+	p.filters = append(p.filters, f)
 	return nil
 }
 
-func argDynamicFilter(q *parser, arg string) error {
-	if q.arg >= len(q.args) {
+func argDynamicFilter(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
-	parameter := q.args[q.arg]
-	q.arg++
-	f := q.dynamicFilter
+	parameter := p.args[p.arg]
+	p.arg++
+	f := p.dynamicFilter
 	if f == nil {
 		f = filter.New()
 	}
@@ -305,7 +312,7 @@ func argDynamicFilter(q *parser, arg string) error {
 	if err != nil {
 		return err
 	}
-	q.dynamicFilter = f
+	p.dynamicFilter = f
 	return nil
 }
 
@@ -396,8 +403,9 @@ func (p *parser) doPull() error {
 		return err
 	}
 	return r.Pull(&repo.PullConfig{
-		NoOp:    p.noOp,
-		SiteTar: "", // XXX
+		NoOp:        p.noOp,
+		LocalFilter: p.localFilter,
+		SiteTar:     "", // XXX
 	})
 }
 

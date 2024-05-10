@@ -42,8 +42,9 @@ type PushConfig struct {
 }
 
 type PullConfig struct {
-	NoOp    bool
-	SiteTar string
+	NoOp        bool
+	LocalFilter bool
+	SiteTar     string
 }
 
 const numWorkers = 10
@@ -589,21 +590,30 @@ func (r *Repo) Pull(config *PullConfig) error {
 	if err != nil {
 		return fmt.Errorf("reading repository copy of repository filter: %w", err)
 	}
-	siteFilterPath := fileinfo.NewPath(src, repofiles.SiteFilter(site))
+	var siteFilterPath *fileinfo.Path
+	localFilter := config.LocalFilter
 	siteFilter := filter.New()
-	err = siteFilter.ReadFile(siteFilterPath, false)
-	if errors.As(err, &nsk) {
-		misc.Message("site filter does not exist on the repository; trying local copy")
-		siteFilterPath = r.localPath(repofiles.SiteFilter(site))
-		err = siteFilter.ReadFile(siteFilterPath, false)
-		if errors.Is(err, fs.ErrNotExist) {
-			misc.Message("no filter is configured for this site; bootstrapping with exclude all")
-			siteFilter.SetDefaultInclude(false)
-		} else if err != nil {
-			return fmt.Errorf("reading local copy of site filter: %w", err)
+	for {
+		if localFilter {
+			siteFilterPath = r.localPath(repofiles.SiteFilter(site))
+		} else {
+			siteFilterPath = fileinfo.NewPath(src, repofiles.SiteFilter(site))
 		}
-	} else if err != nil {
-		return fmt.Errorf("reading repository copy of site filter: %w", err)
+		err = siteFilter.ReadFile(siteFilterPath, false)
+		if errors.As(err, &nsk) || errors.Is(err, fs.ErrNotExist) {
+			if localFilter {
+				misc.Message("no filter is configured for this site; bootstrapping with exclude all")
+				siteFilter.SetDefaultInclude(false)
+				break
+			} else {
+				misc.Message("site filter does not exist on the repository; trying local copy")
+				localFilter = true
+			}
+		} else if err != nil {
+			return fmt.Errorf("reading site filter: %w", err)
+		} else {
+			break
+		}
 	}
 	filters := []*filter.Filter{
 		repoFilter,

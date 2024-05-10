@@ -860,5 +860,7 @@ prompt: Continue?
 	// create a link
 	// create a directory
 
+	// XXX Change site filter to add something locally. Pull: no changes. Pull -local-filter: see changes.
+
 	// XXX Diff site1 and site2 with both filters, include .qfs/filters
 }
