@@ -302,7 +302,7 @@ func makeDiff(filters []*filter.Filter) *diff.Diff {
 	)
 }
 
-func (r *Repo) generateLocalSiteDb(site string) (database.Database, error) {
+func (r *Repo) generateLocalSiteDb(site string, cleanup bool) (database.Database, error) {
 	// Generate the local site database using prunes only from the repo and site filters.
 	filterFiles := []string{
 		repofiles.SiteFilter(repofiles.RepoSite),
@@ -323,6 +323,7 @@ func (r *Repo) generateLocalSiteDb(site string) (database.Database, error) {
 		traverse.WithNoSpecial(true),
 		traverse.WithFilters(filters),
 		traverse.WithRepoRules(true),
+		traverse.WithCleanup(cleanup),
 	)
 	if err != nil {
 		// TEST: NOT COVERED
@@ -379,7 +380,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
-	localDb, err := r.generateLocalSiteDb(site)
+	localDb, err := r.generateLocalSiteDb(site, config.Cleanup)
 	if err != nil {
 		return err
 	}
@@ -545,7 +546,7 @@ func (r *Repo) PushDb() error {
 	if err != nil {
 		return err
 	}
-	_, err = r.generateLocalSiteDb(site)
+	_, err = r.generateLocalSiteDb(site, false)
 	if err != nil {
 		return err
 	}
@@ -898,5 +899,8 @@ func (r *Repo) loadRepoDb() error {
 		s3source.WithS3Client(r.s3Client),
 		s3source.WithDatabase(r.repoDb),
 	)
+	if err != nil {
+		return err
+	}
 	return nil
 }

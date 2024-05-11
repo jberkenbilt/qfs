@@ -465,10 +465,14 @@ func TestRepo_IsInitialized(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), ".qfs/repo") {
 		t.Errorf("wrong error: %v", err)
 	}
-	_, err = repo.New(
+	r, err := repo.New(
 		repo.WithLocalTop("testdata/files1"),
 		repo.WithS3Client(s3Client),
 	)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	err = r.Init(false)
 	var nsb *types.NoSuchBucket
 	if err == nil || !errors.As(err, &nsb) {
 		t.Errorf("wrong error: %v", err)
@@ -640,6 +644,7 @@ dir3
 	writeFile(t, j("site1/dir1/file-to-remove"), start+6000, 0o444, "")
 	writeFile(t, j("site1/dir3/only-in-site1"), start+7000, 0o644, "")
 	writeFile(t, j("site1/junk/ignored"), start, 0o644, "")
+	writeFile(t, j("site1/dir/a.junk"), start, 0o644, "")
 	testutil.Check(t, os.Mkdir(j("site1/dir2"), 0o755))
 	testutil.Check(t, os.Symlink("../dir1/change-in-site1", j("site1/dir2/link-to-change")))
 	testutil.Check(t, os.Symlink("replace-with-file", j("site1/dir2/link-then-file")))
@@ -659,7 +664,7 @@ dir3
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // Continue?
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.Run([]string{"qfs", "push", "-cleanup", "-top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -691,7 +696,7 @@ mkdir dir3
 add dir3/only-in-site1
 prompt: Continue?
 `,
-		"",
+		filepath.Base(os.Args[0])+": removing dir/a.junk\n",
 	)
 	// Lines in checkMessages are in a non-deterministic order, but checkMessages
 	// sorts expected and actual.
