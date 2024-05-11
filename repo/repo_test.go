@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -249,7 +250,7 @@ func TestS3Source(t *testing.T) {
 	}
 
 	// Traverse again. We should get the same database.
-	mem2, _ := src.Database(true)
+	mem2, _ := src.Database(true, false, nil)
 	o1, _ := testutil.WithStdout(func() {
 		_ = mem1.Print(true)
 	})
@@ -272,7 +273,7 @@ func TestS3Source(t *testing.T) {
 	if _, ok := mem1["file1"]; ok {
 		t.Errorf("file1 is still there")
 	}
-	mem2, _ = src.Database(true)
+	mem2, _ = src.Database(true, false, nil)
 	o1, _ = testutil.WithStdout(func() {
 		_ = mem1.Print(true)
 	})
@@ -400,7 +401,7 @@ func TestKeyLogic(t *testing.T) {
 		s3source.WithS3Client(s3Client),
 	)
 	testutil.Check(t, err)
-	db, err := src.Database(false)
+	db, err := src.Database(false, false, nil)
 	testutil.Check(t, err)
 	expExtra := []string{
 		".@d,1715443064888,0555",   // older
@@ -618,7 +619,6 @@ dir1
 dir2
 dir3
 dir4
-dir5
 `)
 	writeFile(t, j("site1/.qfs/filters/site1"), start, 0o644, `
 :read:prune
@@ -925,6 +925,7 @@ prompt: Continue?
 	start += 3600000
 	writeFile(t, j("site2/dir1/file-to-change-and-chmod"), start, 0o444, "new contents")
 	writeFile(t, j("site2/dir1/ro-file-to-change"), start, 0o444, "new ro contents")
+	writeFile(t, j("site2/dir4/only-site-2"), start, 0o444, "")
 	testutil.Check(t, os.Remove(j("site2/dir1/file-then-dir")))
 	testutil.Check(t, os.Mkdir(j("site2/dir1/file-then-dir"), 0o755))
 	testutil.Check(t, os.Remove(j("site2/dir1/file-then-link")))
@@ -982,6 +983,8 @@ add dir2/link-then-file
 mkdir dir2/new-directory
 add dir2/new-file
 add dir2/new-link
+mkdir dir4
+add dir4/only-site-2
 change dir1/file-to-change-and-chmod
 change dir1/ro-file-to-change
 change dir2/link-to-change
@@ -1036,6 +1039,8 @@ add dir2/link-then-file
 mkdir dir2/new-directory
 add dir2/new-file
 add dir2/new-link
+mkdir dir4
+add dir4/only-site-2
 change dir1/file-to-change-and-chmod
 change dir1/ro-file-to-change
 change dir2/link-to-change
@@ -1076,6 +1081,8 @@ prompt: Continue?
 		"storing dir2/link-to-change",
 		"storing dir1/file-to-chmod",
 		"storing dir2/dir-to-chmod",
+		"storing dir4",
+		"storing dir4/only-site-2",
 		"uploading repository database",
 		"uploading site database",
 	})
@@ -1646,4 +1653,108 @@ prompt: Continue?
 		"",
 		"",
 	)
+	checkMessages(nil)
+
+	// Clean repo -- should be clean
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"no objects to clean from repository",
+		"uploading repository database",
+	})
+
+	// Remove dir3 and dir4 from the repo. We can do this from either site.
+	writeFile(t, j("site1/.qfs/filters/repo"), start, 0o644, `
+:read:prune
+:exclude:
+*/no-sync
+:include:
+dir1
+dir2
+`)
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // continue
+			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`change .qfs/filters/repo
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"downloading latest repository database",
+		"no conflicts found",
+		"----- changes to push -----",
+		"-----",
+		"storing .qfs/filters/repo",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Now clean-repo will remove dir3 and dir4 plus some junk we will add but not something outside the prefix
+	putInput.Key = aws.String("home/potato")
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
+	putInput.Key = aws.String("this/is/safe")
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
+	stdout, _ := testutil.WithStdout(func() {
+		misc.TestPromptChannel <- "y"
+		err = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", j("site1")})
+		if err != nil {
+			t.Errorf("%v", err)
+		}
+	})
+	re := regexp.MustCompile(`^home/dir3/only-in-site1@\S+
+home/dir3@\S+
+home/dir4/only-site-2@\S+
+home/dir4@\S+
+home/potato
+prompt: Remove above keys\?
+$`)
+	if !re.Match(stdout) {
+		t.Errorf("wrong stdout: %s", stdout)
+	}
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"----- keys to remove -----",
+		"-----",
+		"uploading repository database",
+	})
+
+	// The files locally are safe. They will not be removed by pull since they are not in the filter.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no conflicts found",
+		"no changes to pull",
+	})
+
 }

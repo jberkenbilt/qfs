@@ -10,8 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
+	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"io/fs"
@@ -41,7 +43,6 @@ type S3Source struct {
 	downloader *manager.Downloader
 	bucket     string
 	prefix     string
-	repoRules  bool
 	// Everything below requires mutex protection.
 	dbMutex   sync.Mutex
 	db        database.Database
@@ -86,12 +87,6 @@ func WithS3Client(client *s3.Client) func(*S3Source) {
 func WithDatabase(db database.Database) func(*S3Source) {
 	return func(s *S3Source) {
 		s.db = db
-	}
-}
-
-func WithRepoRules(repoRules bool) func(*S3Source) {
-	return func(s *S3Source) {
-		s.repoRules = repoRules
 	}
 }
 
@@ -259,7 +254,7 @@ func (s *S3Source) Remove(path string) error {
 	return nil
 }
 
-func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
+func (s *S3Source) RemoveKeys(toDelete []string) error {
 	for len(toDelete) > 0 {
 		last := min(len(toDelete), DeleteBatchSize)
 		batch := toDelete[:last]
@@ -269,9 +264,7 @@ func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
 			toDelete = toDelete[last:]
 		}
 		var objects []types.ObjectIdentifier
-		for _, p := range batch {
-			key := s.key(p.Path, p)
-			misc.Message("removing %s", p.Path)
+		for _, key := range batch {
 			objects = append(objects, types.ObjectIdentifier{
 				Key: &key,
 			})
@@ -288,13 +281,26 @@ func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
 			// TEST: NOT COVERED
 			return fmt.Errorf("delete keys: %w", err)
 		}
-		if s.db != nil {
-			s.withDbLock(func() {
-				for _, p := range batch {
-					delete(s.db, p.Path)
-				}
-			})
-		}
+	}
+	return nil
+}
+
+func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
+	var keys []string
+	for _, fi := range toDelete {
+		misc.Message("removing %s", fi.Path)
+		keys = append(keys, s.key(fi.Path, fi))
+	}
+	err := s.RemoveKeys(keys)
+	if err != nil {
+		return err
+	}
+	if s.db != nil {
+		s.withDbLock(func() {
+			for _, fi := range toDelete {
+				delete(s.db, fi.Path)
+			}
+		})
 	}
 	return nil
 }
@@ -460,7 +466,11 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	return true, nil
 }
 
-func (s *S3Source) Database(regenerate bool) (database.Database, error) {
+func (s *S3Source) Database(
+	regenerate bool,
+	repoRules bool,
+	filters []*filter.Filter,
+) (database.Database, error) {
 	if !regenerate && s.db != nil {
 		return s.db, nil
 	}
@@ -483,7 +493,7 @@ func (s *S3Source) Database(regenerate bool) (database.Database, error) {
 		input,
 		func(objects []types.Object) {
 			for _, object := range objects {
-				s.dbHandleObject(object)
+				s.dbHandleObject(object, repoRules, filters)
 			}
 		},
 	)
@@ -493,7 +503,14 @@ func (s *S3Source) Database(regenerate bool) (database.Database, error) {
 	return s.db, nil
 }
 
-func (s *S3Source) dbHandleObject(object types.Object) {
+func (s *S3Source) dbHandleObject(
+	object types.Object,
+	repoRules bool,
+	filters []*filter.Filter,
+) {
+	if *object.Key == filepath.Join(s.prefix, repofiles.Busy) {
+		return
+	}
 	fi := s.keyToFileInfo(*object.Key, *object.Size)
 	if fi == nil {
 		s.withDbLock(func() {
@@ -515,7 +532,12 @@ func (s *S3Source) dbHandleObject(object types.Object) {
 				s.extraKeys = append(s.extraKeys, s.key(fi.Path, fi))
 			}
 		} else {
-			s.db[fi.Path] = fi
+			included, _ := filter.IsIncluded(fi.Path, repoRules, filters...)
+			if included {
+				s.db[fi.Path] = fi
+			} else if !strings.HasPrefix(fi.Path, repofiles.Top+"/") {
+				s.extraKeys = append(s.extraKeys, s.key(fi.Path, fi))
+			}
 		}
 	})
 }

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -164,8 +165,8 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 	return fileinfo.NewPath(localsource.New(r.localTop), relPath)
 }
 
-func (r *Repo) Init() error {
-	if r.initialized {
+func (r *Repo) Init(cleanRepo bool) error {
+	if r.initialized && !cleanRepo {
 		if !misc.Prompt("Repository is already initialized. Rebuild database?") {
 			return fmt.Errorf(
 				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
@@ -181,11 +182,43 @@ func (r *Repo) Init() error {
 		// TEST: NOT COVERED
 		return err
 	}
-	_, err = r.src.Database(true)
+	var filters []*filter.Filter
+	if cleanRepo {
+		repoFilterPath := fileinfo.NewPath(r.src, repofiles.SiteFilter(repofiles.RepoSite))
+		f := filter.New()
+		err = f.ReadFile(repoFilterPath, false)
+		if err != nil {
+			return fmt.Errorf("read repository copy of repository filter: %w", err)
+		}
+		filters = append(filters, f)
+	}
+	r.repoDb, err = r.src.Database(true, true, filters)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
+	if cleanRepo {
+		extraKeys := r.src.ExtraKeys()
+		sort.Strings(extraKeys)
+		if len(extraKeys) == 0 {
+			misc.Message("no objects to clean from repository")
+		} else {
+			misc.Message("----- keys to remove -----")
+			for _, k := range extraKeys {
+				fmt.Println(k)
+			}
+			misc.Message("-----")
+			if misc.Prompt("Remove above keys?") {
+				err = r.src.RemoveKeys(extraKeys)
+				if err != nil {
+					return err
+				}
+			} else {
+				misc.Message("not removing extra keys")
+			}
+		}
+	}
+
 	err = r.updateRepoDb()
 	if err != nil {
 		// TEST: NOT COVERED

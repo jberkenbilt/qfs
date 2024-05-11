@@ -40,6 +40,7 @@ type parser struct {
 	checks        bool
 	noOp          bool
 	localFilter   bool
+	cleanRepo     bool
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -94,7 +95,8 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"checks":        argChecks,
 		},
 		actInitRepo: {
-			"top": argTop,
+			"top":        argTop,
+			"clean-repo": argCleanRepo,
 		},
 		actPush: {
 			"top":     argTop,
@@ -159,6 +161,11 @@ func argTop(p *parser, arg string) error {
 	}
 	p.top = p.args[p.arg]
 	p.arg++
+	return nil
+}
+
+func argCleanRepo(p *parser, _ string) error {
+	p.cleanRepo = true
 	return nil
 }
 
@@ -391,7 +398,7 @@ func (p *parser) doInitRepo() error {
 	if err != nil {
 		return err
 	}
-	return r.Init()
+	return r.Init(p.cleanRepo)
 }
 
 func (p *parser) doPull() error {

@@ -69,13 +69,11 @@ for i in all:
     to disappear. So
     * If you remove a tracked directory and push/pull, it disappears
     * If you remove something from a filter and push/pull, it stays
-    * If you pushed/pulled something by mistake and remove it from the filter, you have to manually
-      remove it.
-    * We could either add a `repo-rm` or document that you have to remove the files from s3
-      (including the directory marker) and re-initialize. Alternatively, push the filter change and
-      then run `clean-repo`.
+    * If you pulled something by mistake and remove it from the filter, you have to manually remove
+      it.
+    * If you pushed something by mistake, remove it from the repo filter, push again, and then run
+      `init-repo -clean-repo`.
   * local-tar
-  * clean-repo
   * push-db
   * pull-repo
   * list
@@ -84,7 +82,6 @@ for i in all:
 * Decide if site tar is worth it. If not, search for `-save-site` and `-site-file` and move the
   design of that feature to a separate part of the document in case it ever comes back.
 * Lifecycle tests
-  * exclude something in repo filter, run `clean-repo`, and watch it disappear
   * recreate site
     * delete site2 except .qfs/{repo,site}
     * delete site2 db in repo
@@ -225,6 +222,8 @@ qfs subcommand [options]
   * `-checks` -- output conflict checking data
 * `init-repo` -- initialize a repository
   * See [Sites](#sites)
+  * -clean-repo -- removes all objects under the prefix that are not included by the filter. This
+    includes objects that weren't put there by qfs.
 * `init-site` -- initialize a new site
   * See [Sites](#sites)
 * `push`
