@@ -779,10 +779,12 @@ func (r *Repo) applyChangesFromRepo(
 	// permissions when we replace them.
 	for _, ch := range diffResult.Change {
 		path := r.localPath(ch.Path)
-		err := os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
-		if err != nil {
-			// TEST: NOT COVERED
-			return fmt.Errorf("%s: make writable: %w", path.Path(), err)
+		if ch.FileType == fileinfo.TypeFile {
+			err := os.Chmod(path.Path(), fs.FileMode(ch.Permissions|0o600))
+			if err != nil {
+				// TEST: NOT COVERED
+				return fmt.Errorf("%s: make writable: %w", path.Path(), err)
+			}
 		}
 	}
 
