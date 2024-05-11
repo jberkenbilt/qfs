@@ -352,21 +352,20 @@ func (ld *Loader) handleQfs(fields []string) (*fileinfo.FileInfo, error) {
 }
 
 func (ld *Loader) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
-	if len(fields) != 7 {
-		return nil, fmt.Errorf("wrong number of fields: %d, not 7", len(fields))
+	if len(fields) != 6 {
+		return nil, fmt.Errorf("wrong number of fields: %d, not 6", len(fields))
 	}
-	// 0    1      2     3     4    5    6
-	// name s3Time fType mtime size mode special
-	ld.copyFieldIfEmpty(fields, 5) // mode
+	// 0    1     2     3    4    5
+	// name fType mtime size mode special
+	ld.copyFieldIfEmpty(fields, 4) // mode
 	path := fields[0]
-	s3milliseconds, _ := strconv.Atoi(fields[1])
 	fileType := fileinfo.TypeUnknown
-	if len(fields[2]) == 1 {
-		fileType = fileinfo.FileType(fields[2][0])
+	if len(fields[1]) == 1 {
+		fileType = fileinfo.FileType(fields[1][0])
 	}
-	milliseconds, _ := strconv.Atoi(fields[3])
-	size, _ := strconv.Atoi(fields[4])
-	mode, _ := strconv.ParseInt(fields[5], 8, 32)
+	milliseconds, _ := strconv.Atoi(fields[2])
+	size, _ := strconv.Atoi(fields[3])
+	mode, _ := strconv.ParseInt(fields[4], 8, 32)
 	return &fileinfo.FileInfo{
 		Path:        path,
 		FileType:    fileType,
@@ -375,8 +374,7 @@ func (ld *Loader) handleRepo(fields []string) (*fileinfo.FileInfo, error) {
 		Permissions: uint16(mode),
 		Uid:         CurUid,
 		Gid:         CurGid,
-		Special:     fields[6],
-		S3Time:      time.UnixMilli(int64(s3milliseconds)),
+		Special:     fields[5],
 	}, nil
 }
 
@@ -428,7 +426,7 @@ func WriteDb(filename string, files Database, format DbFormat) error {
 	var lastGid int
 	first := true
 	err = files.ForEach(func(f *fileinfo.FileInfo) error {
-		mode := newOrEmpty(first, &lastMode, f.Permissions, fmt.Sprintf("0%o", f.Permissions))
+		mode := newOrEmpty(first, &lastMode, f.Permissions, fmt.Sprintf("%04o", f.Permissions))
 		uid := newOrEmpty(first, &lastUid, f.Uid, strconv.FormatInt(int64(f.Uid), 10))
 		gid := newOrEmpty(first, &lastGid, f.Gid, strconv.FormatInt(int64(f.Gid), 10))
 		first = false
@@ -447,7 +445,6 @@ func WriteDb(filename string, files Database, format DbFormat) error {
 		} else {
 			fields = []string{
 				f.Path,
-				strconv.FormatInt(f.S3Time.UnixMilli(), 10),
 				string(f.FileType),
 				strconv.FormatInt(f.ModTime.UnixMilli(), 10),
 				strconv.FormatInt(f.Size, 10),

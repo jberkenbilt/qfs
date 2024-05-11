@@ -179,14 +179,8 @@ func TestS3Source(t *testing.T) {
 		testutil.Check(t, err)
 		return src
 	}
-	src := makeSrc(nil)
-	entries, err := src.DirEntries("")
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	if len(entries) > 0 {
-		t.Errorf("unexpected entries: %#v", entries)
-	}
+	mem1 := database.Database{}
+	src := makeSrc(mem1)
 	for _, f := range []string{
 		".",
 		"dir1",
@@ -213,23 +207,24 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong error: %v", err)
 	}
 
-	// Check one key manually to make sure it is in the right place is correct. For
-	// the rest, rely on traversal.
-	headInput := &s3.HeadObjectInput{
-		Bucket: aws.String(TestBucket),
-		Key:    aws.String("home/file1"),
+	// Spot check one entry. For the rest, we will rely on repo tests.
+	fi := mem1["file1"]
+	if fi == nil {
+		for k := range mem1 {
+			t.Error(k)
+		}
+		t.Fatalf("file1 not found")
 	}
-	headOutput, err := s3Client.HeadObject(ctx, headInput)
-	testutil.Check(t, err)
-	if !reflect.DeepEqual(headOutput.Metadata, map[string]string{s3source.MetadataKey: "1714235352000 0644"}) {
-		t.Errorf("wrong metadata %#v", headOutput.Metadata)
+	if fi.ModTime.UnixMilli() != 1714235352000 {
+		t.Errorf("wrong modtime: %d", fi.ModTime.UnixMilli())
 	}
-	if *headOutput.ContentLength != 16 {
-		t.Errorf("wrong size: %v", *headOutput.ContentLength)
+	if fi.Permissions != 0o644 {
+		t.Errorf("wrong permissions %04o", fi.Permissions)
+	}
+	if fi.Size != 16 {
+		t.Errorf("wrong size: %v", fi.Size)
 	}
 
-	mem1, err := src.Database()
-	testutil.Check(t, err)
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3").Path(), mem1, database.DbQfs))
 	testutil.Check(t, database.WriteDb(j("repo-from-s3").Path(), mem1, database.DbRepo))
 	stdout, stderr := testutil.WithStdout(func() {
@@ -251,54 +246,45 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("output: %s\n%s", stdout, stderr)
 	}
 
-	// Traverse again with the reference database. We should get 100% cache hits.
-	src = makeSrc(mem1)
+	// Traverse again. We should get the same database.
+	src = makeSrc(nil)
 	mem2, _ := src.Database()
-	if !reflect.DeepEqual(mem1, mem2) {
-		t.Errorf("databases are inconsistent")
-		_ = mem1.Print(true)
-		fmt.Println("---")
-		_ = mem2.Print(true)
-	}
-	// Modify the database and make sure gets back in sync
-	mem2["extra"] = &fileinfo.FileInfo{Path: "extra", FileType: fileinfo.TypeUnknown, ModTime: time.Now()}
-	delete(mem2, "file1")
-	mem2["dir1/potato"].S3Time = mem2["dir1/potato"].S3Time.Add(-1 * time.Second)
-	src = makeSrc(mem2)
-	mem3, _ := src.Database()
-	if !src.DbChanged() {
-		t.Errorf("db didn't change")
-	}
 	o1, _ := testutil.WithStdout(func() {
 		_ = mem1.Print(true)
 	})
 	o2, _ := testutil.WithStdout(func() {
 		_ = mem2.Print(true)
 	})
-	o3, _ := testutil.WithStdout(func() {
-		_ = mem3.Print(true)
-	})
-	if !slices.Equal(o1, o3) {
+	if !slices.Equal(o1, o2) {
 		t.Errorf("new result doesn't match old result")
 	}
-	if !slices.Equal(o1, o2) {
-		t.Errorf("reference didn't get back in sync")
-		fmt.Printf("%s---%s", o1, o2)
-	}
 
-	// Change S3 to exercise remaining S3 functions and recheck database
-	delete(mem2, "file1")
+	// Change S3 to exercise remaining S3 functions and recheck database. Calling
+	// remove mutates mem1.
+	src = makeSrc(mem1)
+	if _, ok := mem1["file1"]; !ok {
+		t.Errorf("wrong precondition")
+	}
 	testutil.Check(t, src.Remove("file1"))
 	// Remove is idempotent, so no error to do it again.
 	testutil.Check(t, src.Remove("file1"))
-	src = makeSrc(mem2)
-	_, _ = src.Database()
-	if src.DbChanged() {
-		t.Errorf("db changed")
+	if _, ok := mem1["file1"]; ok {
+		t.Errorf("file1 is still there")
+	}
+	src = makeSrc(nil)
+	mem2, _ = src.Database()
+	o1, _ = testutil.WithStdout(func() {
+		_ = mem1.Print(true)
+	})
+	o2, _ = testutil.WithStdout(func() {
+		_ = mem2.Print(true)
+	})
+	if !slices.Equal(o1, o2) {
+		t.Errorf("new result doesn't match old result")
 	}
 
 	_, err = src.Open("nope")
-	if err == nil || !strings.Contains(err.Error(), "get object s3://qfs-test-repo/home/nope:") {
+	if err == nil || !strings.Contains(err.Error(), "s3://qfs-test-repo/home/nope@...:") {
 		t.Errorf("wrong error: %v", err)
 	}
 	rd, err := src.Open("dir1/potato")
@@ -322,10 +308,10 @@ func TestS3Source(t *testing.T) {
 	testutil.Check(t, err)
 	dir2, err := fileinfo.NewPath(src, "dir1").FileInfo()
 	testutil.Check(t, err)
-	if !file1.S3Time.Equal(file2.S3Time) || !file1.ModTime.Equal(file2.ModTime) {
+	if !file1.ModTime.Equal(file2.ModTime) {
 		t.Errorf("file metadata is inconsistent")
 	}
-	if !dir1.S3Time.Equal(dir2.S3Time) || !dir1.ModTime.Equal(dir2.ModTime) {
+	if !dir1.ModTime.Equal(dir2.ModTime) {
 		t.Errorf("dir metadata is inconsistent")
 	}
 
@@ -334,10 +320,10 @@ func TestS3Source(t *testing.T) {
 	if _, ok := mem1["dir1"]; !ok {
 		t.Errorf("wrong precondition")
 	}
-	testutil.Check(t, src.Remove("dir1/"))
+	testutil.Check(t, src.Remove("dir1"))
 	mem2, _ = src.Database()
 	if _, ok := mem1["dir1"]; ok {
-		t.Errorf("stil there")
+		t.Errorf("still there")
 	}
 	if _, ok := mem1["dir1/potato"]; !ok {
 		t.Errorf("descendents are missing")
@@ -393,6 +379,11 @@ func TestS3Source(t *testing.T) {
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("inconsistent results")
 	}
+}
+
+func TestKeyLogic(t *testing.T) {
+	t.Error("do this")
+	// various extra keys including non-latest match and not matching at all
 }
 
 func TestNoClient(t *testing.T) {

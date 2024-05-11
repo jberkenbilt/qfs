@@ -32,7 +32,6 @@ type FileInfo struct {
 	Gid         int
 	Special     string
 	Dev         uint64
-	S3Time      time.Time
 }
 
 type DirEntry struct {

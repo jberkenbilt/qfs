@@ -489,9 +489,6 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 		var objects []types.ObjectIdentifier
 		for _, p := range batch {
 			key := filepath.Join(r.prefix, p.Path)
-			if p.FileType == fileinfo.TypeDirectory {
-				key += "/"
-			}
 			misc.Message("removing %s", p.Path)
 			objects = append(objects, types.ObjectIdentifier{
 				Key: &key,

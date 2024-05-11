@@ -5,6 +5,7 @@ Last full review: 2024-05-06
 # XXX work in
 
 Refactor
+* XXX Add qfs list-s3 s3://bucket/prefix with -long to show mtime and size
 * S3 uses subpackages of s3source (from ~/source/s3-list-bucket/)
   * If a Database is given, use it for FileInfo
   * When Database() is called
@@ -472,8 +473,7 @@ The repository contains a key for each file in the collection with the following
 
 The repository database looks like a qfs database with the following exceptions:
 * The header is the line `QFS REPO 1`
-* The `uid` and `gid` fields are omitted. In their place, the last modified time of the object in S3
-  is stored as a millisecond-granularity timestamp.
+* The `uid` and `gid` fields are omitted.
 * When reading a repository database, the `uid` and `gid` values for every row are set to the
   current user and group ID.
 
