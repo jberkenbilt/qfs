@@ -5,12 +5,11 @@ Last full review: 2024-05-06
 # XXX work in
 
 Refactor
-* Work on the push/pull lifecycle tests first so we don't have to keep retesting
-* Change database.Memory to maybe fileinfo.Database
-* Scanner interface with Scan() that returns fileinfo.Database
-  * File system implements existing traverse
-  * S3 implements ~/source/s3-list-bucket/
-  * Database reads the database
+* S3 uses subpackages of s3source (from ~/source/s3-list-bucket/)
+  * If a Database is given, use it for FileInfo
+  * When Database() is called
+    * Travers using ~/source/s3-list-bucket/
+    * Keep track of files that don't belong including non-latest repo files and non-repo file
 * RepoDb doesn't need s3 timestamp. When listing the bucket, if there are conflicts, delete all but
   the one with the most recent timestamp.
 * Keep the local copy of the repo db in sync incrementally as originally planned.
@@ -81,7 +80,6 @@ for i in all:
     * We could either add a `repo-rm` or document that you have to remove the files from s3
       (including the directory marker) and re-initialize. Alternatively, push the filter change and
       then run `clean-repo`.
-  * implement lifecycle test on what's there so far
   * local-tar
   * clean-repo
   * push-db
