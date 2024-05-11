@@ -4,6 +4,15 @@ Last full review: 2024-05-06
 
 # XXX work in
 
+Comment in a sync file
+```
+# Note: we do not exclude CVS directories as this triggers a qsync bug
+# that mishandles directories that are not empty on the source prior
+# to processing exclusions but are empty after processing them. This
+# is not an issue with .git or .svn since there's just the one
+# directory at the top of a workspace.
+```
+
 Refactor
 * Add qfs list-s3 s3://bucket/prefix with -long to show mtime and size
 
@@ -74,7 +83,6 @@ for i in all:
     * If you pushed something by mistake, remove it from the repo filter, push again, and then run
       `init-repo -clean-repo`.
   * local-tar
-  * push-db
   * pull-repo
   * list
   * get
@@ -86,11 +94,6 @@ for i in all:
     * delete site2 except .qfs/{repo,site}
     * delete site2 db in repo
     * pull -- should fully reconstruct site
-  * revert
-    * make change on site1
-    * pull (no changes)
-    * `push-db`
-    * pull (revert change)
   * regenerate db
     * delete object in repo
     * push (no changes)

@@ -62,6 +62,7 @@ const (
 	actInitRepo
 	actPush
 	actPull
+	actPushDb
 )
 
 var argTables = func() map[actionKey]map[string]argHandler {
@@ -108,6 +109,9 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"n":            argNoOp,
 			"local-filter": argLocalFilter,
 		},
+		actPushDb: {
+			"top": argTop,
+		},
 	}
 	for _, i := range []actionKey{actScan, actDiff} {
 		for arg, fn := range filterArgs {
@@ -132,6 +136,7 @@ func (p *parser) check() error {
 	case actInitRepo:
 	case actPush:
 	case actPull:
+	case actPushDb:
 	}
 	return nil
 }
@@ -181,6 +186,8 @@ func argSubcommand(p *parser, arg string) error {
 		p.action = actPush
 	case "pull":
 		p.action = actPull
+	case "push-db":
+		p.action = actPushDb
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -433,6 +440,17 @@ func (p *parser) doPush() error {
 	})
 }
 
+func (p *parser) doPushDb() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.PushDb()
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
@@ -468,6 +486,8 @@ func Run(args []string) error {
 		return p.doPush()
 	case actPull:
 		return p.doPull()
+	case actPushDb:
+		return p.doPushDb()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil

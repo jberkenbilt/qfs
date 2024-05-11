@@ -1756,5 +1756,68 @@ $`)
 		"no conflicts found",
 		"no changes to pull",
 	})
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y"
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`change .qfs/filters/repo
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"loading site database from repository",
+		"downloading latest repository database",
+		"no conflicts found",
+		"----- changes to pull -----",
+		"-----",
+		"downloaded .qfs/filters/repo",
+		"updated repository copy of site database to reflect changes",
+	})
 
+	// Make a change locally. Then push-db and pull to revert the change.
+	writeFile(t, j("site2/dir2/will-be-reverted"), start, 0644, "")
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{"qfs", "push-db", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages([]string{
+		"generating local database",
+		"uploading site database",
+	})
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y"
+			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`rm dir2/will-be-reverted
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"loading site database from repository",
+		"no conflicts found",
+		"----- changes to pull -----",
+		"-----",
+		"removing dir2/will-be-reverted",
+		"updated repository copy of site database to reflect changes",
+	})
 }

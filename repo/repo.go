@@ -82,20 +82,6 @@ func New(options ...Options) (*Repo, error) {
 		}
 		r.s3Client = s3.NewFromConfig(cfg)
 	}
-	err = r.loadRepoDb()
-	if err != nil {
-		// TEST: not covered
-		return nil, err
-	}
-	r.src, err = s3source.New(
-		r.bucket,
-		r.prefix,
-		s3source.WithS3Client(r.s3Client),
-		s3source.WithDatabase(r.repoDb),
-	)
-	if err != nil {
-		return nil, err
-	}
 	return r, nil
 }
 
@@ -166,6 +152,11 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 }
 
 func (r *Repo) Init(cleanRepo bool) error {
+	err := r.loadRepoDb()
+	if err != nil {
+		// TEST: not covered
+		return err
+	}
 	if r.initialized && !cleanRepo {
 		if !misc.Prompt("Repository is already initialized. Rebuild database?") {
 			return fmt.Errorf(
@@ -177,7 +168,7 @@ func (r *Repo) Init(cleanRepo bool) error {
 		}
 	}
 
-	err := r.createBusy()
+	err = r.createBusy()
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -311,12 +302,66 @@ func makeDiff(filters []*filter.Filter) *diff.Diff {
 	)
 }
 
-func (r *Repo) Push(config *PushConfig) error {
-	if !r.initialized {
-		// TEST: NOT COVERED
-		return fmt.Errorf("repository is not initialized")
+func (r *Repo) generateLocalSiteDb(site string) (database.Database, error) {
+	// Generate the local site database using prunes only from the repo and site filters.
+	filterFiles := []string{
+		repofiles.SiteFilter(repofiles.RepoSite),
+		repofiles.SiteFilter(site),
 	}
-	err := r.checkBusy()
+	var filters []*filter.Filter
+	for _, file := range filterFiles {
+		f := filter.New()
+		err := f.ReadFile(r.localPath(file), true)
+		if err != nil {
+			// TEST: NOT COVERED
+			return nil, err
+		}
+		filters = append(filters, f)
+	}
+	tr, err := traverse.New(
+		r.localTop,
+		traverse.WithNoSpecial(true),
+		traverse.WithFilters(filters),
+		traverse.WithRepoRules(true),
+	)
+	if err != nil {
+		// TEST: NOT COVERED
+		return nil, err
+	}
+	misc.Message("generating local database")
+	localResult, err := tr.Traverse(nil, nil)
+	if err != nil {
+		// TEST: NOT COVERED
+		return nil, err
+	}
+	localDb := localResult.Database()
+	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
+	err = database.WriteDb(localSiteDbPath.Path(), localDb, database.DbQfs)
+	if err != nil {
+		// TEST: NOT COVERED
+		return nil, err
+	}
+	return localDb, nil
+}
+
+func (r *Repo) uploadSiteDb(site string) error {
+	misc.Message("uploading site database")
+	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
+	err := r.src.Store(localSiteDbPath, repofiles.SiteDb(site))
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	return nil
+}
+
+func (r *Repo) Push(config *PushConfig) error {
+	err := r.loadRepoDb()
+	if err != nil {
+		// TEST: not covered
+		return err
+	}
+	err = r.checkBusy()
 	if err != nil {
 		return err
 	}
@@ -333,48 +378,19 @@ func (r *Repo) Push(config *PushConfig) error {
 		// TEST: NOT COVERED
 		return err
 	}
-	// Generate the local site database using prunes only from the repo and site filters.
+
+	localDb, err := r.generateLocalSiteDb(site)
+	if err != nil {
+		return err
+	}
+
+	// Diff against the local copy of the repo database using the same filters but
+	// honoring everything, not just prunes.
 	filterFiles := []string{
 		repofiles.SiteFilter(repofiles.RepoSite),
 		repofiles.SiteFilter(site),
 	}
 	var filters []*filter.Filter
-	for _, file := range filterFiles {
-		f := filter.New()
-		err = f.ReadFile(r.localPath(file), true)
-		if err != nil {
-			// TEST: NOT COVERED
-			return err
-		}
-		filters = append(filters, f)
-	}
-	tr, err := traverse.New(
-		r.localTop,
-		traverse.WithNoSpecial(true),
-		traverse.WithFilters(filters),
-		traverse.WithRepoRules(true),
-		traverse.WithCleanup(config.Cleanup),
-	)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	misc.Message("generating local database")
-	localResult, err := tr.Traverse(nil, nil)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	localDb := localResult.Database()
-	localSiteDbPath := r.localPath(repofiles.SiteDb(site))
-	err = database.WriteDb(localSiteDbPath.Path(), localDb, database.DbQfs)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	// Diff against the local copy of the repo database using the same filters but
-	// honoring everything, not just prunes.
-	filters = nil
 	for _, file := range filterFiles {
 		f := filter.New()
 		err = f.ReadFile(r.localPath(file), false)
@@ -461,8 +477,7 @@ func (r *Repo) Push(config *PushConfig) error {
 	}
 
 	// Store the site's database in the repository
-	misc.Message("uploading site database")
-	err = r.src.Store(localSiteDbPath, repofiles.SiteDb(site))
+	err = r.uploadSiteDb(site)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -525,6 +540,32 @@ func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result
 	return nil
 }
 
+func (r *Repo) PushDb() error {
+	site, err := r.currentSite()
+	if err != nil {
+		return err
+	}
+	_, err = r.generateLocalSiteDb(site)
+	if err != nil {
+		return err
+	}
+	r.src, err = s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+	)
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	err = r.uploadSiteDb(site)
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	return nil
+}
+
 func (r *Repo) SaveDiff(path string, diffResult *diff.Result) error {
 	f, err := os.Create(r.localPath(path).Path())
 	if err != nil {
@@ -545,11 +586,12 @@ func (r *Repo) SaveDiff(path string, diffResult *diff.Result) error {
 }
 
 func (r *Repo) Pull(config *PullConfig) error {
-	if !r.initialized {
-		// TEST: NOT COVERED
-		return fmt.Errorf("repository is not initialized")
+	err := r.loadRepoDb()
+	if err != nil {
+		// TEST: not covered
+		return err
 	}
-	err := r.checkBusy()
+	err = r.checkBusy()
 	if err != nil {
 		return err
 	}
@@ -814,39 +856,45 @@ func (r *Repo) loadRepoDb() error {
 	srcPath := fileinfo.NewPath(src, repofiles.RepoDb())
 	var toLoad *fileinfo.Path
 	requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			r.repoDb = database.Database{}
-			r.downloadedRepoDb = false
-			r.initialized = false
-			return nil
-		}
+	if errors.Is(err, fs.ErrNotExist) {
+		r.repoDb = database.Database{}
+		r.downloadedRepoDb = false
+		r.initialized = false
+	} else if err != nil {
 		// TEST: NOT COVERED
 		return err
-	}
-	if !requiresCopy {
-		misc.Message("local copy of repository database is current")
-		toLoad = localPath
-	}
-	downloaded := false
-	if toLoad == nil {
-		misc.Message("downloading latest repository database")
-		downloaded = true
-		pending := r.localPath(repofiles.TempRepoDb())
-		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
+	} else {
+		if !requiresCopy {
+			misc.Message("local copy of repository database is current")
+			toLoad = localPath
+		}
+		downloaded := false
+		if toLoad == nil {
+			misc.Message("downloading latest repository database")
+			downloaded = true
+			pending := r.localPath(repofiles.TempRepoDb())
+			_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
+			if err != nil {
+				// TEST: NOT COVERED
+				return err
+			}
+			toLoad = pending
+		}
+		db, err := database.Load(toLoad, database.WithRepoRules(true))
 		if err != nil {
 			// TEST: NOT COVERED
 			return err
 		}
-		toLoad = pending
+		r.repoDb = db
+		r.downloadedRepoDb = downloaded
+		r.initialized = true
 	}
-	db, err := database.Load(toLoad, database.WithRepoRules(true))
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	r.repoDb = db
-	r.downloadedRepoDb = downloaded
-	r.initialized = true
+
+	r.src, err = s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+		s3source.WithDatabase(r.repoDb),
+	)
 	return nil
 }
