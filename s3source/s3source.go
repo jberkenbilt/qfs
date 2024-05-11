@@ -11,6 +11,7 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/localsource"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"io/fs"
@@ -22,6 +23,11 @@ import (
 	"sync"
 	"time"
 )
+
+// DeleteBatchSize is the number of items we delete from S3 at once. It is set to
+// the maximum value supported by S3 and is a variable that is overridden from
+// the test suite to exercise the batching logic.
+var DeleteBatchSize = 1000
 
 var pathRe = regexp.MustCompile(`^((?:[^@]|@@)+)@([fdl]),(\d+),((?:[^@]|@@)+)$`)
 var permRe = regexp.MustCompile(`^[0-7]{4}$`)
@@ -46,6 +52,9 @@ type S3Source struct {
 func New(bucket, prefix string, options ...Options) (*S3Source, error) {
 	if strings.Contains(prefix, "@") {
 		return nil, fmt.Errorf("prefix may not contain '@'")
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return nil, fmt.Errorf("prefix may not end with '/'")
 	}
 	s := &S3Source{
 		bucket: bucket,
@@ -250,6 +259,46 @@ func (s *S3Source) Remove(path string) error {
 	return nil
 }
 
+func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
+	for len(toDelete) > 0 {
+		last := min(len(toDelete), DeleteBatchSize)
+		batch := toDelete[:last]
+		if len(toDelete) == last {
+			toDelete = nil
+		} else {
+			toDelete = toDelete[last:]
+		}
+		var objects []types.ObjectIdentifier
+		for _, p := range batch {
+			key := s.key(p.Path, p)
+			misc.Message("removing %s", p.Path)
+			objects = append(objects, types.ObjectIdentifier{
+				Key: &key,
+			})
+		}
+		deleteBatch := types.Delete{
+			Objects: objects,
+		}
+		deleteInput := &s3.DeleteObjectsInput{
+			Bucket: &s.bucket,
+			Delete: &deleteBatch,
+		}
+		_, err := s.s3Client.DeleteObjects(ctx, deleteInput)
+		if err != nil {
+			// TEST: NOT COVERED
+			return fmt.Errorf("delete keys: %w", err)
+		}
+		if s.db != nil {
+			s.withDbLock(func() {
+				for _, p := range batch {
+					delete(s.db, p.Path)
+				}
+			})
+		}
+	}
+	return nil
+}
+
 // Store copies the local file at `path` into the repository with the appropriate
 // metadata. `path` is relative to top of the file collection in both the local
 // and repository contexts.
@@ -411,8 +460,8 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	return true, nil
 }
 
-func (s *S3Source) Database() (database.Database, error) {
-	if s.db != nil {
+func (s *S3Source) Database(regenerate bool) (database.Database, error) {
+	if !regenerate && s.db != nil {
 		return s.db, nil
 	}
 	s.db = database.Database{}

@@ -3,6 +3,7 @@ package repo_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -248,8 +249,7 @@ func TestS3Source(t *testing.T) {
 	}
 
 	// Traverse again. We should get the same database.
-	src = makeSrc(nil)
-	mem2, _ := src.Database()
+	mem2, _ := src.Database(true)
 	o1, _ := testutil.WithStdout(func() {
 		_ = mem1.Print(true)
 	})
@@ -272,8 +272,7 @@ func TestS3Source(t *testing.T) {
 	if _, ok := mem1["file1"]; ok {
 		t.Errorf("file1 is still there")
 	}
-	src = makeSrc(nil)
-	mem2, _ = src.Database()
+	mem2, _ = src.Database(true)
 	o1, _ = testutil.WithStdout(func() {
 		_ = mem1.Print(true)
 	})
@@ -322,7 +321,6 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong precondition")
 	}
 	testutil.Check(t, src.Remove("dir1"))
-	mem2, _ = src.Database()
 	if len(src.ExtraKeys()) > 0 {
 		t.Errorf("there are extra keys")
 	}
@@ -331,12 +329,6 @@ func TestS3Source(t *testing.T) {
 	}
 	if _, ok := mem1["dir1/potato"]; !ok {
 		t.Errorf("descendents are missing")
-	}
-	if !reflect.DeepEqual(mem1, mem2) {
-		t.Errorf("unexpected results")
-		_ = mem1.Print(true)
-		fmt.Println("---")
-		_ = mem2.Print(true)
 	}
 
 	// Exercise retrieval
@@ -399,7 +391,7 @@ func TestKeyLogic(t *testing.T) {
 		"potato/a@@b@l,1715443000777,target@@here",
 	} {
 		input.Key = &k
-		_, err := s3Client.PutObject(context.Background(), input)
+		_, err := s3Client.PutObject(ctx, input)
 		testutil.Check(t, err)
 	}
 	src, err := s3source.New(
@@ -408,7 +400,7 @@ func TestKeyLogic(t *testing.T) {
 		s3source.WithS3Client(s3Client),
 	)
 	testutil.Check(t, err)
-	db, err := src.Database()
+	db, err := src.Database(false)
 	testutil.Check(t, err)
 	expExtra := []string{
 		".@d,1715443064888,0555",   // older
@@ -472,15 +464,13 @@ func TestRepo_IsInitialized(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), ".qfs/repo") {
 		t.Errorf("wrong error: %v", err)
 	}
-	r, err := repo.New(
+	_, err = repo.New(
 		repo.WithLocalTop("testdata/files1"),
 		repo.WithS3Client(s3Client),
 	)
-	testutil.Check(t, err)
-	v, err := r.IsInitialized()
-	testutil.Check(t, err)
-	if v {
-		t.Errorf("repo is initialized when brand new")
+	var nsb *types.NoSuchBucket
+	if err == nil || !errors.As(err, &nsb) {
+		t.Errorf("wrong error: %v", err)
 	}
 }
 
@@ -582,7 +572,7 @@ func TestLifecycle(t *testing.T) {
 		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
-	checkMessages(nil)
+	checkMessages([]string{"local copy of repository database is current"})
 
 	// Re-initialize
 	misc.TestPromptChannel <- "y"
@@ -597,7 +587,10 @@ func TestLifecycle(t *testing.T) {
 		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
-	checkMessages([]string{"uploading repository database"})
+	checkMessages([]string{
+		"local copy of repository database is current",
+		"uploading repository database",
+	})
 
 	// Do the initial push without initializing site
 	err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
@@ -656,6 +649,11 @@ dir3
 	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-then-link"), 0o755))
 	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-chmod"), 0o775))
 	testutil.Check(t, os.Mkdir(j("site1/dir2/dir-to-remove"), 0o555))
+	// Make sure weird files that look like how the repository encodes things don't confuse things.
+	testutil.Check(t, os.Symlink(
+		"looks-like-repo@f,1715443064543,0555",
+		j("site1/dir1/looks-like-repo@l,1715443064543,0777"),
+	))
 
 	testutil.ExpStdout(
 		t,
@@ -678,6 +676,7 @@ add dir1/file-then-link
 add dir1/file-to-change-and-chmod
 add dir1/file-to-chmod
 add dir1/file-to-remove
+add dir1/looks-like-repo@l,1715443064543,0777
 add dir1/ro-file-to-change
 mkdir dir2
 mkdir dir2/dir-then-file
@@ -714,6 +713,7 @@ prompt: Continue?
 		"storing dir1/file-to-chmod",
 		"storing dir1/file-to-remove",
 		"storing dir1/ro-file-to-change",
+		"storing dir1/looks-like-repo@l,1715443064543,0777",
 		"storing dir2/link-then-directory",
 		"storing dir2/link-then-file",
 		"storing dir2/link-to-change",
@@ -860,6 +860,7 @@ add dir1/file-then-link
 add dir1/file-to-change-and-chmod
 add dir1/file-to-chmod
 add dir1/file-to-remove
+add dir1/looks-like-repo@l,1715443064543,0777
 add dir1/ro-file-to-change
 mkdir dir2
 mkdir dir2/dir-then-file
@@ -888,6 +889,7 @@ prompt: Continue?
 		"downloaded dir1/file-to-chmod",
 		"downloaded dir1/file-to-remove",
 		"downloaded dir1/ro-file-to-change",
+		"downloaded dir1/looks-like-repo@l,1715443064543,0777",
 		"downloaded dir2/link-then-directory",
 		"downloaded dir2/link-then-file",
 		"downloaded dir2/link-to-change",
@@ -998,8 +1000,8 @@ chmod 0750 dir2/dir-to-chmod
 	})
 
 	// Push
-	oldBatchSize := repo.DeleteBatchSize
-	repo.DeleteBatchSize = 3 // Exercise deleting in multiple batches
+	oldBatchSize := s3source.DeleteBatchSize
+	s3source.DeleteBatchSize = 3 // Exercise deleting in multiple batches
 	testutil.ExpStdout(
 		t,
 		func() {
@@ -1077,13 +1079,13 @@ prompt: Continue?
 		"uploading repository database",
 		"uploading site database",
 	})
-	repo.DeleteBatchSize = oldBatchSize
+	s3source.DeleteBatchSize = oldBatchSize
 
 	// Change file on site1 but don't push yet
 	start += 3600000
 	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "change in site 1")
 
-	// Pull changes from site1. The file that was changed in site1 is ignored because
+	// Pull changes to site1. The file that was changed in site1 is ignored because
 	// we haven't pushed it yet.
 	testutil.ExpStdout(
 		t,
@@ -1508,16 +1510,13 @@ prompt: Conflicts detected. Exit?
 	})
 
 	// Push with busy file
-	src, err := s3source.New(
-		TestBucket,
-		"home",
-		s3source.WithS3Client(s3Client),
-	)
+	putInput := &s3.PutObjectInput{
+		Bucket: aws.String(TestBucket),
+		Key:    aws.String("home/.qfs/busy"),
+		Body:   bytes.NewReader([]byte{}),
+	}
+	_, err = s3Client.PutObject(ctx, putInput)
 	testutil.Check(t, err)
-	testutil.Check(t, src.Store(
-		fileinfo.NewPath(localsource.New(tmp), "site1/dir1/change-in-site1"),
-		".qfs/busy",
-	))
 	testutil.ExpStdout(
 		t,
 		func() {
@@ -1529,8 +1528,13 @@ prompt: Conflicts detected. Exit?
 		"",
 		"",
 	)
-	checkMessages(nil)
-	testutil.Check(t, src.Remove(".qfs/busy"))
+	checkMessages([]string{"downloading latest repository database"})
+	deleteInput := &s3.DeleteObjectInput{
+		Bucket: aws.String(TestBucket),
+		Key:    aws.String("home/.qfs/busy"),
+	}
+	_, err = s3Client.DeleteObject(ctx, deleteInput)
+	testutil.Check(t, err)
 
 	// Push allowing local to override
 	testutil.ExpStdout(
@@ -1581,10 +1585,8 @@ prompt: Continue?
 	})
 
 	// Pull with busy file
-	testutil.Check(t, src.Store(
-		fileinfo.NewPath(localsource.New(tmp), "site1/dir1/change-in-site1"),
-		".qfs/busy",
-	))
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
 	testutil.ExpStdout(
 		t,
 		func() {
@@ -1596,8 +1598,9 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages(nil)
-	testutil.Check(t, src.Remove(".qfs/busy"))
+	checkMessages([]string{"local copy of repository database is current"})
+	_, err = s3Client.DeleteObject(ctx, deleteInput)
+	testutil.Check(t, err)
 
 	// Bring site2 back in sync
 	testutil.ExpStdout(

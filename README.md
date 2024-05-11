@@ -5,15 +5,8 @@ Last full review: 2024-05-06
 # XXX work in
 
 Refactor
-* XXX Add qfs list-s3 s3://bucket/prefix with -long to show mtime and size
-* S3 uses subpackages of s3source (from ~/source/s3-list-bucket/)
-  * If a Database is given, use it for FileInfo
-  * When Database() is called
-    * Travers using ~/source/s3-list-bucket/
-    * Keep track of files that don't belong including non-latest repo files and non-repo file
-* RepoDb doesn't need s3 timestamp. When listing the bucket, if there are conflicts, delete all but
-  the one with the most recent timestamp.
-* Keep the local copy of the repo db in sync incrementally as originally planned.
+* Add qfs list-s3 s3://bucket/prefix with -long to show mtime and size
+
 * Repo structure
   prefix/
     .@d,modtime,permissions -- only for root
@@ -91,7 +84,6 @@ for i in all:
 * Decide if site tar is worth it. If not, search for `-save-site` and `-site-file` and move the
   design of that feature to a separate part of the document in case it ever comes back.
 * Lifecycle tests
-  * Include a file whose name looks like repo storage e.g. path@d,123,123
   * exclude something in repo filter, run `clean-repo`, and watch it disappear
   * recreate site
     * delete site2 except .qfs/{repo,site}

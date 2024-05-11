@@ -25,18 +25,17 @@ import (
 	"strings"
 )
 
-// DeleteBatchSize is the number of items we delete from S3 at once. It is set to
-// the maximum value supported by S3 and is a variable that is overridden from
-// the test suite to exercise the batching logic.
-var DeleteBatchSize = 1000
-
 type Options func(*Repo)
 
 type Repo struct {
-	localTop string
-	bucket   string
-	prefix   string
-	s3Client *s3.Client
+	localTop         string
+	bucket           string
+	prefix           string
+	s3Client         *s3.Client
+	initialized      bool
+	src              *s3source.S3Source
+	repoDb           database.Database
+	downloadedRepoDb bool
 }
 
 type PushConfig struct {
@@ -82,6 +81,20 @@ func New(options ...Options) (*Repo, error) {
 		}
 		r.s3Client = s3.NewFromConfig(cfg)
 	}
+	err = r.loadRepoDb()
+	if err != nil {
+		// TEST: not covered
+		return nil, err
+	}
+	r.src, err = s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+		s3source.WithDatabase(r.repoDb),
+	)
+	if err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -102,7 +115,7 @@ func (r *Repo) createBusy() error {
 	input := &s3.PutObjectInput{
 		Bucket: &r.bucket,
 		Key:    aws.String(filepath.Join(r.prefix, repofiles.Busy)),
-		Body:   bytes.NewBuffer(make([]byte, 0)),
+		Body:   bytes.NewReader([]byte{}),
 	}
 	_, err := r.s3Client.PutObject(ctx, input)
 	if err != nil {
@@ -113,20 +126,25 @@ func (r *Repo) createBusy() error {
 }
 
 func (r *Repo) checkBusy() error {
-	exists, err := r.existsInRepo(repofiles.Busy)
+	input := &s3.HeadObjectInput{
+		Bucket: &r.bucket,
+		Key:    aws.String(filepath.Join(r.prefix, repofiles.Busy)),
+	}
+	_, err := r.s3Client.HeadObject(ctx, input)
 	if err != nil {
+		var notFound *types.NotFound
+		if errors.As(err, &notFound) {
+			return nil
+		}
 		// TEST: NOT COVERED
 		return err
 	}
-	if exists {
-		return fmt.Errorf(
-			"s3://%s/%s/%s exists; if necessary, rerun qfs init-repo",
-			r.bucket,
-			r.prefix,
-			repofiles.Busy,
-		)
-	}
-	return nil
+	return fmt.Errorf(
+		"s3://%s/%s/%s exists; if necessary, rerun qfs init-repo",
+		r.bucket,
+		r.prefix,
+		repofiles.Busy,
+	)
 }
 
 func (r *Repo) removeBusy() error {
@@ -142,38 +160,12 @@ func (r *Repo) removeBusy() error {
 	return nil
 }
 
-func (r *Repo) existsInRepo(path string) (bool, error) {
-	input := &s3.HeadObjectInput{
-		Bucket: &r.bucket,
-		Key:    aws.String(filepath.Join(r.prefix, path)),
-	}
-	_, err := r.s3Client.HeadObject(ctx, input)
-	if err != nil {
-		var notFound *types.NotFound
-		if errors.As(err, &notFound) {
-			return false, nil
-		}
-		// TEST: NOT COVERED
-		return false, err
-	}
-	return true, nil
-}
-
-func (r *Repo) IsInitialized() (bool, error) {
-	return r.existsInRepo(repofiles.RepoDb())
-}
-
 func (r *Repo) localPath(relPath string) *fileinfo.Path {
 	return fileinfo.NewPath(localsource.New(r.localTop), relPath)
 }
 
 func (r *Repo) Init() error {
-	isInitialized, err := r.IsInitialized()
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	if isInitialized {
+	if r.initialized {
 		if !misc.Prompt("Repository is already initialized. Rebuild database?") {
 			return fmt.Errorf(
 				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
@@ -184,12 +176,17 @@ func (r *Repo) Init() error {
 		}
 	}
 
-	err = r.createBusy()
+	err := r.createBusy()
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
-	err = r.traverseAndStore()
+	_, err = r.src.Database(true)
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	err = r.updateRepoDb()
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -202,25 +199,15 @@ func (r *Repo) Init() error {
 	return nil
 }
 
-func (r *Repo) traverseAndStore() error {
-	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client), s3source.WithRepoRules(true))
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	files, err := src.Database()
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
+func (r *Repo) updateRepoDb() error {
 	tmpDb := r.localPath(repofiles.TempRepoDb())
-	err = database.WriteDb(tmpDb.Path(), files, database.DbRepo)
+	err := database.WriteDb(tmpDb.Path(), r.repoDb, database.DbRepo)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
 	}
 	misc.Message("uploading repository database")
-	err = src.Store(tmpDb, repofiles.RepoDb())
+	err = r.src.Store(tmpDb, repofiles.RepoDb())
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -292,6 +279,10 @@ func makeDiff(filters []*filter.Filter) *diff.Diff {
 }
 
 func (r *Repo) Push(config *PushConfig) error {
+	if !r.initialized {
+		// TEST: NOT COVERED
+		return fmt.Errorf("repository is not initialized")
+	}
 	err := r.checkBusy()
 	if err != nil {
 		return err
@@ -376,14 +367,8 @@ func (r *Repo) Push(config *PushConfig) error {
 		}
 	}
 
-	downloadedRepoDb, remoteRepoDb, err := r.loadRepoDb()
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-
 	err = checkConflicts(diffResult.Check, !config.NoOp, func(path string) (*fileinfo.FileInfo, error) {
-		info, ok := remoteRepoDb[path]
+		info, ok := r.repoDb[path]
 		if !ok {
 			return nil, nil
 		}
@@ -418,51 +403,33 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
-	// Upload added and changed files.
-	src, err := s3source.New(
-		r.bucket,
-		r.prefix,
-		s3source.WithS3Client(r.s3Client),
-		s3source.WithDatabase(remoteRepoDb),
-	)
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-
 	if changes {
-		err = r.pushChangesToRepo(src, diffResult)
+		err = r.pushChangesToRepo(r.src, diffResult)
 		if err != nil {
 			// TEST: NOT COVERED
 			return err
 		}
-		// Update the repository database. It would be nice if we could update our
-		// working copy and push it up to avoid the extra traversal, but as of 2024-05,
-		// this is not possible since ListObjectsV2 is the only way to get the
-		// millisecond granularity S3 timestamps that we need for the repository
-		// database.
-		err = r.traverseAndStore()
+		// Update the repository database.
+		err = r.updateRepoDb()
 		if err != nil {
 			// TEST: NOT COVERED
 			return err
 		}
-	} else {
-		if downloadedRepoDb {
-			// Our local copy was outdated, so update it.
-			misc.Message("updating local copy of repository database")
-			err = os.Rename(
-				r.localPath(repofiles.TempRepoDb()).Path(),
-				r.localPath(repofiles.RepoDb()).Path(),
-			)
-			if err != nil {
-				return err
-			}
+	} else if r.downloadedRepoDb {
+		// Our local copy was outdated, so update it.
+		misc.Message("updating local copy of repository database")
+		err = os.Rename(
+			r.localPath(repofiles.TempRepoDb()).Path(),
+			r.localPath(repofiles.RepoDb()).Path(),
+		)
+		if err != nil {
+			return err
 		}
 	}
 
 	// Store the site's database in the repository
 	misc.Message("uploading site database")
-	err = src.Store(localSiteDbPath, repofiles.SiteDb(site))
+	err = r.src.Store(localSiteDbPath, repofiles.SiteDb(site))
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -477,35 +444,10 @@ func (r *Repo) Push(config *PushConfig) error {
 
 func (r *Repo) pushChangesToRepo(src *s3source.S3Source, diffResult *diff.Result) error {
 	// Delete what needs to be deleted.
-	toDelete := diffResult.Rm
-	for len(toDelete) > 0 {
-		last := min(len(toDelete), DeleteBatchSize)
-		batch := toDelete[:last]
-		if len(toDelete) == last {
-			toDelete = nil
-		} else {
-			toDelete = toDelete[last:]
-		}
-		var objects []types.ObjectIdentifier
-		for _, p := range batch {
-			key := filepath.Join(r.prefix, p.Path)
-			misc.Message("removing %s", p.Path)
-			objects = append(objects, types.ObjectIdentifier{
-				Key: &key,
-			})
-		}
-		deleteBatch := types.Delete{
-			Objects: objects,
-		}
-		deleteInput := &s3.DeleteObjectsInput{
-			Bucket: &r.bucket,
-			Delete: &deleteBatch,
-		}
-		_, err := r.s3Client.DeleteObjects(ctx, deleteInput)
-		if err != nil {
-			// TEST: NOT COVERED
-			return fmt.Errorf("delete keys: %w", err)
-		}
+	err := r.src.RemoveBatch(diffResult.Rm)
+	if err != nil {
+		// TEST: NOT COVERED
+		return fmt.Errorf("delete keys: %w", err)
 	}
 
 	c := make(chan *fileinfo.FileInfo, numWorkers)
@@ -570,6 +512,10 @@ func (r *Repo) SaveDiff(path string, diffResult *diff.Result) error {
 }
 
 func (r *Repo) Pull(config *PullConfig) error {
+	if !r.initialized {
+		// TEST: NOT COVERED
+		return fmt.Errorf("repository is not initialized")
+	}
 	err := r.checkBusy()
 	if err != nil {
 		return err
@@ -579,23 +525,11 @@ func (r *Repo) Pull(config *PullConfig) error {
 		// TEST: NOT COVERED
 		return err
 	}
-	downloadedRepoDb, repoDb, err := r.loadRepoDb()
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
 
-	// Load the repository copy of the site database. If not found, use an empty database.
-	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
-	if err != nil {
-		// TEST: NOT COVERED
-		return err
-	}
-	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(site))
+	repoSiteDbPath := fileinfo.NewPath(r.src, repofiles.SiteDb(site))
 	files, err := database.Load(repoSiteDbPath, database.WithRepoRules(true))
 	var siteDb database.Database
-	var nsk *types.NoSuchKey
-	if errors.As(err, &nsk) {
+	if errors.Is(err, fs.ErrNotExist) {
 		misc.Message("repository doesn't contain a database for this site")
 		siteDb = database.Database{}
 	} else if err != nil {
@@ -611,7 +545,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	// possible to bootstrap a new site from the new site rather than pre-creating
 	// the filter.
 	repoFilter := filter.New()
-	repoFilterPath := fileinfo.NewPath(src, repofiles.SiteFilter(repofiles.RepoSite))
+	repoFilterPath := fileinfo.NewPath(r.src, repofiles.SiteFilter(repofiles.RepoSite))
 	err = repoFilter.ReadFile(repoFilterPath, false)
 	if err != nil {
 		// TEST: NOT COVERED
@@ -624,10 +558,10 @@ func (r *Repo) Pull(config *PullConfig) error {
 		if localFilter {
 			siteFilterPath = r.localPath(repofiles.SiteFilter(site))
 		} else {
-			siteFilterPath = fileinfo.NewPath(src, repofiles.SiteFilter(site))
+			siteFilterPath = fileinfo.NewPath(r.src, repofiles.SiteFilter(site))
 		}
 		err = siteFilter.ReadFile(siteFilterPath, false)
-		if errors.As(err, &nsk) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			if localFilter {
 				misc.Message("no filter is configured for this site; bootstrapping with exclude all")
 				siteFilter.SetDefaultInclude(false)
@@ -651,7 +585,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	// Look at differences between the repository's state and the repository's last
 	// record of the site's state.
 	d := makeDiff(filters)
-	diffResult, err := d.Run(siteDb, repoDb)
+	diffResult, err := d.Run(siteDb, r.repoDb)
 	if err != nil {
 		// TEST: NOT COVERED
 		return err
@@ -702,7 +636,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 	}
 
 	if changes {
-		err = r.applyChangesFromRepo(src, diffResult, siteDb)
+		err = r.applyChangesFromRepo(r.src, diffResult, siteDb)
 		if err != nil {
 			// TEST: NOT COVERED
 			return err
@@ -714,7 +648,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 			// TEST: NOT COVERED
 			return err
 		}
-		err = src.Store(localSiteFile, repofiles.SiteDb(site))
+		err = r.src.Store(localSiteFile, repofiles.SiteDb(site))
 		if err != nil {
 			// TEST: NOT COVERED
 			return fmt.Errorf("update site database in repository: %w", err)
@@ -722,7 +656,7 @@ func (r *Repo) Pull(config *PullConfig) error {
 		misc.Message("updated repository copy of site database to reflect changes")
 	}
 
-	if downloadedRepoDb {
+	if r.downloadedRepoDb {
 		err = os.Rename(
 			r.localPath(repofiles.TempRepoDb()).Path(),
 			r.localPath(repofiles.RepoDb()).Path(),
@@ -833,19 +767,29 @@ func (r *Repo) applyChangesFromRepo(
 	return nil
 }
 
-func (r *Repo) loadRepoDb() (bool, database.Database, error) {
+func (r *Repo) loadRepoDb() error {
 	localPath := r.localPath(repofiles.RepoDb())
-	src, err := s3source.New(r.bucket, r.prefix, s3source.WithS3Client(r.s3Client))
+	src, err := s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+	)
 	if err != nil {
 		// TEST: NOT COVERED
-		return false, nil, err
+		return err
 	}
 	srcPath := fileinfo.NewPath(src, repofiles.RepoDb())
 	var toLoad *fileinfo.Path
 	requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			r.repoDb = database.Database{}
+			r.downloadedRepoDb = false
+			r.initialized = false
+			return nil
+		}
 		// TEST: NOT COVERED
-		return false, nil, err
+		return err
 	}
 	if !requiresCopy {
 		misc.Message("local copy of repository database is current")
@@ -859,14 +803,17 @@ func (r *Repo) loadRepoDb() (bool, database.Database, error) {
 		_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
 		if err != nil {
 			// TEST: NOT COVERED
-			return false, nil, err
+			return err
 		}
 		toLoad = pending
 	}
 	db, err := database.Load(toLoad, database.WithRepoRules(true))
 	if err != nil {
 		// TEST: NOT COVERED
-		return false, nil, err
+		return err
 	}
-	return downloaded, db, nil
+	r.repoDb = db
+	r.downloadedRepoDb = downloaded
+	r.initialized = true
+	return nil
 }

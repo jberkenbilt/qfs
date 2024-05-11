@@ -78,9 +78,8 @@ func Load(path *fileinfo.Path, options ...Options) (Database, error) {
 	}
 
 	db := Database{}
-	err = ld.forEachRow(func(info *fileinfo.FileInfo) error {
+	err = ld.forEachRow(func(info *fileinfo.FileInfo) {
 		db[info.Path] = info
-		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -205,7 +204,7 @@ func (ld *Loader) getRow() ([]byte, error) {
 	return data, nil
 }
 
-func (ld *Loader) forEachRow(fn func(*fileinfo.FileInfo) error) error {
+func (ld *Loader) forEachRow(fn func(*fileinfo.FileInfo)) error {
 	for {
 		data, err := ld.getRow()
 		if err != nil {
@@ -248,10 +247,7 @@ func (ld *Loader) forEachRow(fn func(*fileinfo.FileInfo) error) error {
 				}
 			}
 			if included {
-				err = fn(f)
-				if err != nil {
-					return fmt.Errorf("%s at offset %d: %w", ld.path.Path(), ld.lastOffset, err)
-				}
+				fn(f)
 			}
 		}
 	}

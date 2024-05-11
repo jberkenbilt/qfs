@@ -135,7 +135,7 @@ func TestErrors(t *testing.T) {
 		"testdata/bad6":       "testdata/bad6 at offset 6: EOF",
 		"testdata/bad7":       "testdata/bad7 at offset 42: wrong number of fields: 7, not 8",
 		"testdata/bad8":       "testdata/bad8 at offset 84: wrong number of fields: 8, not 9",
-		"testdata/bad9":       "testdata/bad9 at offset 48: wrong number of fields: 6, not 7",
+		"testdata/bad9":       "testdata/bad9 at offset 46: wrong number of fields: 5, not 6",
 	}
 	for filename, text := range cases {
 		t.Run(filename, func(t *testing.T) {
