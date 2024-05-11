@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -92,17 +91,21 @@ func (s *S3Source) FullPath(path string) string {
 }
 
 func (s *S3Source) keyToFileInfo(key string, size int64) *fileinfo.FileInfo {
-	if !strings.HasPrefix(key, s.prefix+"/") {
+	prefix := s.prefix
+	if prefix != "" {
+		prefix += "/"
+	}
+	if !strings.HasPrefix(key, prefix) {
 		// TEST: NOT COVERED. ListObjectsV2 won't return a key that doesn't start with
 		// the requested prefix.
 		panic("key doesn't start with prefix")
 	}
-	key = key[len(s.prefix)+1:]
+	key = key[len(prefix):]
 	m := pathRe.FindStringSubmatch(key)
 	if m == nil {
 		return nil
 	}
-	base := m[1]
+	base := strings.Replace(m[1], "@@", "@", -1)
 	modTimeMs, err := strconv.ParseInt(m[3], 10, 64)
 	if err != nil {
 		// modTime is invalid
@@ -121,7 +124,7 @@ func (s *S3Source) keyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 		}
 		permissions, _ = strconv.ParseInt(rest, 8, 16)
 	} else {
-		special = rest
+		special = strings.Replace(rest, "@@", "@", -1)
 		permissions = 0o777
 	}
 	return &fileinfo.FileInfo{
@@ -197,7 +200,7 @@ func (s *S3Source) key(path string, fi *fileinfo.FileInfo) string {
 	if fi != nil {
 		var rest string
 		if fi.FileType == fileinfo.TypeLink {
-			rest = fi.Special
+			rest = strings.Replace(fi.Special, "@", "@@", -1)
 		} else {
 			rest = fmt.Sprintf("%04o", fi.Permissions)
 		}
@@ -418,9 +421,13 @@ func (s *S3Source) Database() (database.Database, error) {
 	if err != nil {
 		return nil, err
 	}
+	prefix := s.prefix
+	if prefix != "" {
+		prefix += "/"
+	}
 	input := &s3.ListObjectsV2Input{
 		Bucket: &s.bucket,
-		Prefix: aws.String(s.prefix + "/"),
+		Prefix: &prefix,
 	}
 	err = lister.List(
 		context.Background(),

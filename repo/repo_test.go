@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -322,6 +323,9 @@ func TestS3Source(t *testing.T) {
 	}
 	testutil.Check(t, src.Remove("dir1"))
 	mem2, _ = src.Database()
+	if len(src.ExtraKeys()) > 0 {
+		t.Errorf("there are extra keys")
+	}
 	if _, ok := mem1["dir1"]; ok {
 		t.Errorf("still there")
 	}
@@ -382,8 +386,75 @@ func TestS3Source(t *testing.T) {
 }
 
 func TestKeyLogic(t *testing.T) {
-	t.Error("do this")
-	// various extra keys including non-latest match and not matching at all
+	setUpTestBucket()
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(TestBucket),
+	}
+	for _, k := range []string{
+		".@d,1715443064999,0755",
+		".@d,1715443064888,0555",
+		".@.@f,1715443064888,0775",
+		"potato-salad",
+		"potato/.@f,1715443000777,0644",
+		"potato/a@@b@l,1715443000777,target@@here",
+	} {
+		input.Key = &k
+		_, err := s3Client.PutObject(context.Background(), input)
+		testutil.Check(t, err)
+	}
+	src, err := s3source.New(
+		TestBucket,
+		"",
+		s3source.WithS3Client(s3Client),
+	)
+	testutil.Check(t, err)
+	db, err := src.Database()
+	testutil.Check(t, err)
+	expExtra := []string{
+		".@d,1715443064888,0555",   // older
+		".@.@f,1715443064888,0775", // invalid name
+		"potato-salad",             // invalid name
+	}
+	expDb := database.Database{
+		".": {
+			FileType:    fileinfo.TypeDirectory,
+			ModTime:     time.UnixMilli(1715443064999),
+			Permissions: 0o755,
+		},
+		"potato/.": {
+			FileType:    fileinfo.TypeFile,
+			ModTime:     time.UnixMilli(1715443000777),
+			Permissions: 0o644,
+		},
+		"potato/a@b": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000777),
+			Permissions: 0o777,
+			Special:     "target@here",
+		},
+	}
+	sort.Strings(expExtra)
+	extra := src.ExtraKeys()
+	sort.Strings(extra)
+	if !slices.Equal(extra, expExtra) {
+		t.Errorf("wrong extra: %#v", extra)
+	}
+	for k, exp := range expDb {
+		actual := db[k]
+		if actual == nil {
+			t.Errorf("missing %s", k)
+		} else if !(actual.Path == k &&
+			actual.ModTime.Equal(exp.ModTime) &&
+			actual.Permissions == exp.Permissions &&
+			actual.Special == exp.Special) {
+			t.Errorf("wrong db: %v", actual)
+		}
+	}
+	for k := range db {
+		if _, ok := expDb[k]; !ok {
+			t.Errorf("missing: %s", k)
+		}
+	}
 }
 
 func TestNoClient(t *testing.T) {
