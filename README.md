@@ -74,6 +74,7 @@ for i in all:
 ```
 
 * TO DO
+  * Get tests to pass when run in a different time zone
   * Document how to remove things. Removing something from a filter causes it to be untracked, not
     to disappear. So
     * If you remove a tracked directory and push/pull, it disappears
