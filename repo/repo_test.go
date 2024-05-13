@@ -380,33 +380,27 @@ func TestS3Source(t *testing.T) {
 	// Exercise pure s3 scan
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
-	stdout, _ = testutil.WithStdout(func() {
-		testutil.Check(t, qfs.Run([]string{"qfs", "scan", "s3://" + TestBucket}))
-	})
-	lines := strings.Split(strings.TrimSpace(string(stdout)), "\n")
-	var files []string
 	fileRe := regexp.MustCompile(`^(.+)@(.*?)$`)
-	for _, line := range lines {
-		m := fileRe.FindStringSubmatch(line)
-		if m == nil {
-			files = append(files, line)
-		} else {
-			files = append(files, m[1])
-		}
-	}
-	sort.Strings(files)
-	expFiles := []string{
-		"home/.",
-		"home/dir1/empty-directory",
-		"home/dir1/potato",
-		"home/dir1/salad",
-		"home/file2",
-		"home/file3",
-		"home/repo-db",
-	}
-	if !slices.Equal(files, expFiles) {
-		t.Errorf("%#v", files)
-	}
+	testutil.CheckLinesSorted(
+		t,
+		func(s string) string {
+			m := fileRe.FindStringSubmatch(s)
+			if m == nil {
+				return s
+			}
+			return m[1]
+		},
+		[]string{"qfs", "scan", "s3://" + TestBucket},
+		[]string{
+			"home/.",
+			"home/dir1/empty-directory",
+			"home/dir1/potato",
+			"home/dir1/salad",
+			"home/file2",
+			"home/file3",
+			"home/repo-db",
+		},
+	)
 }
 
 func TestKeyLogic(t *testing.T) {
@@ -1127,6 +1121,85 @@ prompt: Continue?
 	// Change file on site1 but don't push yet
 	start += 3600000
 	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "change in site 1")
+
+	// Exercise repo scan
+	splitFields := func(s string) string {
+		fields := strings.Split(s, " ")
+		if len(fields) >= 7 {
+			return fields[1] + " " + fields[6]
+		}
+		return s
+	}
+	testutil.CheckLinesSorted(
+		t,
+		splitFields,
+		[]string{"qfs", "scan", "repo:", "-top", j("site1")},
+		[]string{
+			"d dir1",
+			"d dir1/file-then-dir",
+			"d dir2",
+			"d dir2/dir-to-chmod",
+			"d dir2/link-then-directory",
+			"d dir2/new-directory",
+			"d dir3",
+			"d dir4",
+			"f .qfs/db/repo",
+			"f .qfs/db/site1",
+			"f .qfs/db/site2",
+			"f .qfs/filters/prune",
+			"f .qfs/filters/repo",
+			"f .qfs/filters/site1",
+			"f .qfs/filters/site2",
+			"f dir1/change-in-site1",
+			"f dir1/file-to-change-and-chmod",
+			"f dir1/file-to-chmod",
+			"f dir1/ro-file-to-change",
+			"f dir2/dir-then-file",
+			"f dir2/link-then-file",
+			"f dir2/new-file",
+			"f dir3/only-in-site1",
+			"f dir4/only-site-2",
+			"l dir1/file-then-link",
+			"l dir1/looks-like-repo@l,1715443064543,0777",
+			"l dir2/dir-then-link",
+			"l dir2/link-to-change",
+			"l dir2/new-link",
+		},
+	)
+	// Exercise repo site database scan
+	testutil.CheckLinesSorted(
+		t,
+		splitFields,
+		[]string{"qfs", "scan", "repo:site2", "-top", j("site2")},
+		[]string{
+			"d .",
+			"d .qfs",
+			"d dir1",
+			"d dir1/file-then-dir",
+			"d dir2",
+			"d dir2/dir-to-chmod",
+			"d dir2/link-then-directory",
+			"d dir2/new-directory",
+			"d dir4",
+			"f .qfs/filters/prune",
+			"f .qfs/filters/repo",
+			"f .qfs/filters/site1",
+			"f .qfs/filters/site2",
+			"f dir1/change-in-site1",
+			"f dir1/file-to-change-and-chmod",
+			"f dir1/file-to-chmod",
+			"f dir1/ro-file-to-change",
+			"f dir2/dir-then-file",
+			"f dir2/link-then-file",
+			"f dir2/new-file",
+			"f dir4/only-site-2",
+			"l dir1/file-then-link",
+			"l dir1/looks-like-repo@l,1715443064543,0777",
+			"l dir2/dir-then-link",
+			"l dir2/link-to-change",
+			"l dir2/new-link",
+		},
+	)
 
 	// Pull changes to site1. The file that was changed in site1 is ignored because
 	// we haven't pushed it yet.

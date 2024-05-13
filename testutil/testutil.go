@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ func Check(t *testing.T, err error) {
 	}
 }
 
-func CheckLines(t *testing.T, cmd []string, expLines []string) {
+func checkLinesInternal(t *testing.T, sorted bool, filter func(string) string, cmd []string, expLines []string) {
 	t.Helper()
 	stdout, stderr := WithStdout(func() {
 		Check(t, qfs.Run(cmd))
@@ -36,12 +37,31 @@ func CheckLines(t *testing.T, cmd []string, expLines []string) {
 		t.Errorf("stderr: %s", stderr)
 	}
 	lines := ToLines(stdout)
+	if filter != nil {
+		var t []string
+		for _, line := range lines {
+			t = append(t, filter(line))
+		}
+		lines = t
+	}
+	if sorted {
+		sort.Strings(lines)
+		sort.Strings(expLines)
+	}
 	if !slices.Equal(lines, expLines) {
 		t.Error("wrong output")
 		for _, line := range lines {
 			t.Error(line)
 		}
 	}
+}
+
+func CheckLines(t *testing.T, cmd []string, expLines []string) {
+	checkLinesInternal(t, false, nil, cmd, expLines)
+}
+
+func CheckLinesSorted(t *testing.T, filter func(string) string, cmd []string, expLines []string) {
+	checkLinesInternal(t, true, filter, cmd, expLines)
 }
 
 func WithStdout(fn func()) ([]byte, []byte) {

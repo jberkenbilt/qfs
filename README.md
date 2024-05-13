@@ -4,9 +4,7 @@ Last full review: 2024-05-06
 
 # XXX work in
 
-* scan repo: -- traverse contents of repository as repo using x for extra keys
-* scan repo:site -- scan a site database from the repo
-* scan s3://bucket/prefix  -- list a bucket; no -db option
+* examples of using scan repo:site with dynamic filters
 * do completion and help
 * don't need pull-repo. Use pull -n and move the file instead.
 * list and get are still useful. rsync is still useful.
@@ -213,6 +211,8 @@ qfs subcommand [options]
     * Options that only apply when scanning a file system (not a database):
       * `-cleanup` -- remove any plain file that is classified as junk by any of the filters
       * `-xdev` -- don't cross device boundaries
+* All commands that operate on the repository accept these options:
+  * `-top path` -- specify top-level directory of repository
 
 ## qfs Subcommands
 
@@ -230,6 +230,7 @@ qfs subcommand [options]
   * `-db` -- optionally specify an output database; if not specified, write to stdout
   * `-f` -- include only files and symlinks (same as `-no-special -no-dir`)
   * `-no-special` -- omit special files (devices, pipes, sockets)
+  * `-top path` -- specify top-level directory of repository for `repo:...` only
   * Only when output is stdout (not a database):
     * `-long` -- if writing to stdout, include uid/gid data, which is usually omitted
 * `diff` -- compare two inputs, possibly applying additional filters (replaces `qsdiff`)

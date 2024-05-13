@@ -26,6 +26,8 @@ import (
 	"strings"
 )
 
+const ScanPrefix = "repo:"
+
 type Options func(*Repo)
 
 type Repo struct {
@@ -903,4 +905,30 @@ func (r *Repo) loadRepoDb() error {
 		return err
 	}
 	return nil
+}
+
+func (r *Repo) Scan(input string, filters []*filter.Filter) (database.Database, error) {
+	if !strings.HasPrefix(input, ScanPrefix) {
+		panic("repo.Scan called with input that doesn't start with " + ScanPrefix)
+	}
+	input = input[len(ScanPrefix):]
+	src, err := s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if input == "" {
+		// Scan the repository including any .qfs files
+		return src.Database(true, false, filters)
+	}
+	// Scan site (or repository) database
+	repoSiteDbPath := fileinfo.NewPath(src, repofiles.SiteDb(input))
+	return database.Load(
+		repoSiteDbPath,
+		database.WithRepoRules(false),
+		database.WithFilters(filters),
+	)
 }

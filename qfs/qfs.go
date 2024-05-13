@@ -24,8 +24,6 @@ import (
 var S3Client *s3.Client // Overridden in test suite
 var s3Re = regexp.MustCompile(`^s3://([^/]+)(?:/(.*))?$`)
 
-const repoPrefix = "repo:"
-
 type parser struct {
 	progName      string
 	args          []string
@@ -95,6 +93,7 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"db":      argDb,
 			"cleanup": argCleanup,
 			"xdev":    argXDev,
+			"top":     argTop, // only with repo:...
 		},
 		actDiff: {
 			"":              argDiffPositional,
@@ -387,25 +386,36 @@ func (p *parser) doScan() error {
 		}
 		return nil
 	}
-	if strings.HasPrefix(p.input1, repoPrefix) {
-		return fmt.Errorf("not implement")
-	}
-
-	scanner, err := scan.New(
-		p.input1,
-		scan.WithFilters(p.filters),
-		scan.WithSameDev(p.sameDev),
-		scan.WithCleanup(p.cleanup),
-		scan.WithFilesOnly(p.filesOnly),
-		scan.WithNoSpecial(p.noSpecial),
-	)
-	if err != nil {
-		// TEST: NOT COVERED. scan.New never returns an error.
-		return fmt.Errorf("create scanner: %w", err)
-	}
-	files, err := scanner.Run()
-	if err != nil {
-		return fmt.Errorf("scan: %w", err)
+	var files database.Database
+	if strings.HasPrefix(p.input1, repo.ScanPrefix) {
+		r, err := repo.New(
+			repo.WithLocalTop(p.top),
+			repo.WithS3Client(S3Client),
+		)
+		if err != nil {
+			return err
+		}
+		files, err = r.Scan(p.input1, p.filters)
+		if err != nil {
+			return err
+		}
+	} else {
+		scanner, err := scan.New(
+			p.input1,
+			scan.WithFilters(p.filters),
+			scan.WithSameDev(p.sameDev),
+			scan.WithCleanup(p.cleanup),
+			scan.WithFilesOnly(p.filesOnly),
+			scan.WithNoSpecial(p.noSpecial),
+		)
+		if err != nil {
+			// TEST: NOT COVERED. scan.New never returns an error.
+			return fmt.Errorf("create scanner: %w", err)
+		}
+		files, err = scanner.Run()
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
 	}
 	if p.db != "" {
 		return database.WriteDb(p.db, files, database.DbQfs)
