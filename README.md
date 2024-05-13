@@ -4,6 +4,13 @@ Last full review: 2024-05-06
 
 # XXX work in
 
+* scan repo: -- traverse contents of repository as repo using x for extra keys
+* scan repo:site -- scan a site database from the repo
+* scan s3://bucket/prefix  -- list a bucket; no -db option
+* do completion and help
+* don't need pull-repo. Use pull -n and move the file instead.
+* list and get are still useful. rsync is still useful.
+
 Comment in a sync file
 ```
 # Note: we do not exclude CVS directories as this triggers a qsync bug
