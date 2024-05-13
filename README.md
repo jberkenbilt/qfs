@@ -217,7 +217,15 @@ qfs subcommand [options]
 ## qfs Subcommands
 
 * `scan` -- scan and filter file system or database (replaces `qsfiles` and `qsprint`)
-  * Positional: directory or qfs database file
+  * Positional: one of
+    * local directory
+    * local database file
+    * `repo:` -- scan repository with repo encoding awareness
+    * `repo:$site` -- scan repository copy of site database for given site
+    * `s3://bucket[/prefix]` -- general concurrent S3 scan, much faster than `aws s3 ls`
+      * `-db` is ignored
+      * With `-long`, output `mtime size key`; otherwise, just output `key`
+      * Output order is non-deterministic
   * _filter options_
   * `-db` -- optionally specify an output database; if not specified, write to stdout
   * `-f` -- include only files and symlinks (same as `-no-special -no-dir`)

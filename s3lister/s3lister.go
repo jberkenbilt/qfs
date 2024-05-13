@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"log/slog"
 	"os"
+	"reflect"
 	"time"
 )
 
@@ -34,7 +35,7 @@ func New(options ...Options) (*Lister, error) {
 	if l.threads == 0 {
 		l.threads = DefaultThreads
 	}
-	if l.s3Client == nil {
+	if reflect.ValueOf(l.s3Client).IsNil() {
 		cfg, err := config.LoadDefaultConfig(context.Background())
 		if err != nil {
 			return nil, err

@@ -376,6 +376,37 @@ func TestS3Source(t *testing.T) {
 	if !reflect.DeepEqual(mem1, mem2) {
 		t.Errorf("inconsistent results")
 	}
+
+	// Exercise pure s3 scan
+	qfs.S3Client = s3Client
+	defer func() { qfs.S3Client = nil }()
+	stdout, _ = testutil.WithStdout(func() {
+		testutil.Check(t, qfs.Run([]string{"qfs", "scan", "s3://" + TestBucket}))
+	})
+	lines := strings.Split(strings.TrimSpace(string(stdout)), "\n")
+	var files []string
+	fileRe := regexp.MustCompile(`^(.+)@(.*?)$`)
+	for _, line := range lines {
+		m := fileRe.FindStringSubmatch(line)
+		if m == nil {
+			files = append(files, line)
+		} else {
+			files = append(files, m[1])
+		}
+	}
+	sort.Strings(files)
+	expFiles := []string{
+		"home/.",
+		"home/dir1/empty-directory",
+		"home/dir1/potato",
+		"home/dir1/salad",
+		"home/file2",
+		"home/file3",
+		"home/repo-db",
+	}
+	if !slices.Equal(files, expFiles) {
+		t.Errorf("%#v", files)
+	}
 }
 
 func TestKeyLogic(t *testing.T) {

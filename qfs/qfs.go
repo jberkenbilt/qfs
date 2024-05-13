@@ -2,22 +2,29 @@
 package qfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/repo"
+	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 var S3Client *s3.Client // Overridden in test suite
+var s3Re = regexp.MustCompile(`^s3://([^/]+)(?:/(.*))?$`)
+
+const repoPrefix = "repo:"
 
 type parser struct {
 	progName      string
@@ -354,6 +361,36 @@ func (p *parser) handleArg() error {
 }
 
 func (p *parser) doScan() error {
+	s3Match := s3Re.FindStringSubmatch(p.input1)
+	if s3Match != nil {
+		bucket := s3Match[1]
+		prefix := s3Match[2]
+		ls, err := s3lister.New(s3lister.WithS3Client(S3Client))
+		if err != nil {
+			return err
+		}
+		input := &s3.ListObjectsV2Input{
+			Bucket: &bucket,
+			Prefix: &prefix,
+		}
+		err = ls.List(context.Background(), input, func(objects []types.Object) {
+			for _, obj := range objects {
+				if p.long {
+					fmt.Printf("%d %d %s\n", obj.LastModified.UnixMilli(), *obj.Size, *obj.Key)
+				} else {
+					fmt.Println(*obj.Key)
+				}
+			}
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if strings.HasPrefix(p.input1, repoPrefix) {
+		return fmt.Errorf("not implement")
+	}
+
 	scanner, err := scan.New(
 		p.input1,
 		scan.WithFilters(p.filters),
