@@ -42,17 +42,13 @@ type Repo struct {
 }
 
 type PushConfig struct {
-	Cleanup     bool
-	NoOp        bool
-	LocalTar    string
-	SaveSite    string
-	SaveSiteTar string
+	Cleanup bool
+	NoOp    bool
 }
 
 type PullConfig struct {
 	NoOp        bool
 	LocalFilter bool
-	SiteTar     string
 }
 
 const numWorkers = 10
@@ -430,8 +426,6 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
-	// XXX Remember LocalTar, LocalSite, SaveSiteTar
-
 	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
 	if changes {
 		misc.Message("----- changes to push -----")
@@ -694,8 +688,6 @@ func (r *Repo) Pull(config *PullConfig) error {
 	if err != nil {
 		return err
 	}
-
-	// XXX site tar
 
 	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
 	if changes {

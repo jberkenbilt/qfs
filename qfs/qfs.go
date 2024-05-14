@@ -466,7 +466,6 @@ func (p *parser) doPull() error {
 	return r.Pull(&repo.PullConfig{
 		NoOp:        p.noOp,
 		LocalFilter: p.localFilter,
-		SiteTar:     "", // XXX
 	})
 }
 
@@ -479,11 +478,8 @@ func (p *parser) doPush() error {
 		return err
 	}
 	return r.Push(&repo.PushConfig{
-		Cleanup:     p.cleanup,
-		NoOp:        p.noOp,
-		LocalTar:    "", // XXX
-		SaveSite:    "", // XXX
-		SaveSiteTar: "", // XXX
+		Cleanup: p.cleanup,
+		NoOp:    p.noOp,
 	})
 }
 
