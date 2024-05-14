@@ -4,43 +4,8 @@ Last full review: 2024-05-06
 
 # XXX work in
 
-* examples of using scan repo:site with dynamic filters
-* do completion and help
-* don't need pull-repo. Use pull -n and move the file instead.
-* list and get are still useful. rsync is still useful.
-
-Comment in a sync file
-```
-# Note: we do not exclude CVS directories as this triggers a qsync bug
-# that mishandles directories that are not empty on the source prior
-# to processing exclusions but are empty after processing them. This
-# is not an issue with .git or .svn since there's just the one
-# directory at the top of a workspace.
-```
-
-Refactor
-* Add qfs list-s3 s3://bucket/prefix with -long to show mtime and size
-
-* Repo structure
-  prefix/
-    .@d,modtime,permissions -- only for root
-    some/path@[fld],modtime,[permissions|target]
-
-  So if you have
-    login/
-      config/
-        env
-      file
-      link -> file
-
-  You would get
-    login/.@d,modtime,permissions
-    login/config@d,modtime,permissions
-    login/config/env@f,modtime,permissions
-    login/file@f,modtime,permissions
-    login/link@l,modtime,target
-
-  To get versions, do list-object-versions on path@ (including .@) and sort by descending s3
+* document use of `pull -n` and `push` to revert the repository, analogous to `push-db` and `pull`
+* To get versions, do list-object-versions on path@ (including .@) and sort by descending s3
   timestamp across differing keys including delete markers. If a delete marker and a non-deleted
   version have the same timestamp, favor the new version. Ignore anything whose key doesn't match
   after truncating everything after the last @. (Be sure to test with something with @ in the file
@@ -79,6 +44,7 @@ for i in all:
 ```
 
 * TO DO
+  * completion and help
   * Get tests to pass when run in a different time zone
   * Document how to remove things. Removing something from a filter causes it to be untracked, not
     to disappear. So
@@ -88,26 +54,10 @@ for i in all:
       it.
     * If you pushed something by mistake, remove it from the repo filter, push again, and then run
       `init-repo -clean-repo`.
-  * local-tar
-  * pull-repo
-  * list
+  * list-versions
   * get
-  * rsync
-* Decide if site tar is worth it. If not, search for `-save-site` and `-site-file` and move the
-  design of that feature to a separate part of the document in case it ever comes back.
-* Lifecycle tests
-  * recreate site
-    * delete site2 except .qfs/{repo,site}
-    * delete site2 db in repo
-    * pull -- should fully reconstruct site
-  * regenerate db
-    * delete object in repo
-    * push (no changes)
-    * init-db with regeneration
-    * push -n (restore deleted file)
-    * pull -n (delete local file)
-    * push (restore file)
-    * pull (no changes)
+  * sync
+* Remove remnants of `-local`, `-save-site` and `-site-file`
 
 ----------
 
@@ -201,10 +151,6 @@ telling you what changed.
   * Without implicit descendant inclusion, this would cause removal of directories that contain
     included files but are not themselves included.
 * At present, pulling contents into read-only directories will not work.
-* The `push -save-site site file.tar.gz` and `pull -site-file file.tar.gz` features are not
-  implemented because the are complex, error-prone, and probably not necessary. If time proves that
-  to be correct, I will remove it from the main documentation and add it to a separate section.
-  Otherwise, I will implement it.
 
 # CLI
 
@@ -240,6 +186,8 @@ qfs subcommand [options]
     * local database file
     * `repo:` -- scan repository with repo encoding awareness
     * `repo:$site` -- scan repository copy of site database for given site
+      * Example: to see what a different site may have in a particular directory, you could run
+      `qfs scan repo:other-site -include some/path`
     * `s3://bucket[/prefix]` -- general concurrent S3 scan, much faster than `aws s3 ls`
       * `-db` is ignored
       * With `-long`, output `mtime size key`; otherwise, just output `key`
@@ -268,26 +216,21 @@ qfs subcommand [options]
   * See [Sites](#sites)
   * `-cleanup` -- cleans junk files
   * `-n` -- perform conflict checking but make no changes
-  * `-local file.tar.gz` -- save a tar file with changes instead of pushing; useful for backups if offline
-  * `-save-site site file.tar.gz` -- save a tar file with changes for site; see [Sites](#sites)
 * `pull`
   * See [Sites](#sites)
   * `-n` -- perform conflict checking but make no changes
   * `-local-filter` -- use the local filter; useful for pulling after a filter change
-  * `-site-file file.tar.gz` -- use the specified tar file as a source of files that would be
-    pulled. This is the file created by `push -save-site`.
 * `push-db` -- regenerate local db and push to repository
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
-* `pull-repo` -- pull the latest repository database
-  * When followed by `push`, this can be used to revert the repository to the state of a site.
-* `list file` -- list all known versions of a file in the repository
-  * For best results, use bucket versioning
-* `get file` -- copy a file from the repository
-  * `-version v` -- copy the specified version; useful for restoring an old version of a file
-  * `-out path` -- write the output to the given location
-  * `-replace` -- replace the file with the retrieved version
+* `list-versions path` -- list all known versions of file in the repository at or below a specified
+  path. For this to be useful, bucket versioning should be enabled.
+* `get path` -- copy a file/directory from the repository
+  * `-at-time` -- copy the version that existed at the specified timestamp
+  * `-out location` -- write the output to the given location, which must not exist.
+  * `-replace` -- replace the local file with the retrieved version; only valid with a single file
   * One of `-out` or `-replace` must be given.
-* `rsync` -- create equivalent (as much as possible) rsync rules files (replaces `qsync_to_rsync`)
+* `sync src dest` -- synchronize the destination directory with the source directory subject to
+  filtering rules
   * _filter options_
 
 # Filters
@@ -487,15 +430,38 @@ object metadata. The `busy` object is not sufficient to protect against race con
 multiple simultaneous updaters, but on a human timescale, it can protect against accidental
 concurrent use or detect if an operation failed before completing.
 
-The repository contains a key for each file in the collection with the following specifics:
-* `.qfs/filters` is always included, but the rest of `.qfs` is excluded, regardless of filters
-* Files in `.qfs/db` are copied to the repository explicitly and do not appear in databases
-* Only files, links, and directories are represented
-* Directory keys end with `/`, and directory objects are zero-length
-* Symbolic link objects are zero-length
-* All keys have object metadata containing a `qfs` key whose value is `modtime mode` for files and
-  directories, and `modtime ->target` for symbolic links, where `modtime` is a
-  millisecond-granularity timestamp, and `mode` is a four-digital octal mode.
+The repository contains a key for each file in the collection under the specifid prefix. A file,
+directory, or link on the site is represented in the repostiroy by the key
+`localpath@type,modtime,{permissions|target}`, where `type` is one of `d`, `f`, or `l`, `modtime` is
+a millisecond-granularity timestamp, `permissions` is a four-digit octal value (for directories and
+files), and `target` is the target of a link. Any `@` that appears in the path or link target is
+doubled. Directories and links are zero-length objects.
+
+Examples:
+* In repository whose prefix is `prefix`, a symbolic link called `one/two@three` that pointed to
+  `../four@five` would be represented by the zero-length object with key
+  `prefix/one/two@@three@l,modtime,../four@@five`
+* If you had this structure:
+  ```
+  login/
+    config/
+      env
+    file
+    link -> file
+  ```
+  the repository would contain
+  ```
+  prefix/login/.@d,modtime,permissions
+  prefix/login/config@d,modtime,permissions
+  prefix/login/config/env@f,modtime,permissions
+  prefix/login/file@f,modtime,permissions
+  prefix/login/link@l,modtime,target
+  ```
+
+The the `.qfs/busy` object is just `.qfs/busy`, but all other repository files, including `.` and
+databases, are encoded as above. Regardless of filters, `.qfs/filters` is always included, and
+everything else in `.qfs` is excluded. The repository and site databases are copied to and from the
+repository explicitly.
 
 The repository database looks like a qfs database with the following exceptions:
 * The header is the line `QFS REPO 1`
@@ -503,24 +469,16 @@ The repository database looks like a qfs database with the following exceptions:
 * When reading a repository database, the `uid` and `gid` values for every row are set to the
   current user and group ID.
 
-The repository and site databases is stored under `.qfs/db`. Although databases never contain
-information about themselves, their object metadata stores the modification time of the local copy
-on the system that most recently pushed. If necessary, it is possible to entirely reconstruct the
-database by recursively listing the prefix and reading the `qfs` metadata key. This can be done
-using the `init-repo` command.
-
 When qfs begins making changes to a repository that cause drift between the actual state and the
 database, it creates an object called `.qfs/busy`. When it has successfully updated the repository,
 it removes `.qfs/busy`. If a push or pull operation detects the presence of `.qfs/busy`, it requires
 the user to reconcile the database first before it does anything.
 
-Many operations operate on behalf of one or more sites and the repository. The following filtering
-rules are always implied:
-* Always use the global filter.
-* Use the filters for each site. For push or pull, that means the main site's filter. For
-  `-save-site`, also use the other site's filter.
-* In `.qfs`, `filters/` is always included, and everything else is excluded. Database files are
-  handled explicitly.
+When doing push or pull operations, the repository filter and the site filter are always both used,
+so a file has to be included by both filters to be considered. This means that excluding a
+previously included item in a filter does not cause the item to disappear on the next push or pull.
+It just causes the item to be untracked. You can use `qfs init-repo -clean-repo` to force excluded
+files to be removed from the repository.
 
 ## Operations
 
@@ -589,9 +547,6 @@ Run `qfs push`. This does the following:
     file either does not exist or has one of the listed modification times.
   * If conflicts are found, offer to abort or override.
 * If `-n` was given, stop
-* If `-local` was given
-  * Create a tar file whose first entries are `.qfs/push` and `.qfs/db/$site` and which subsequently
-    contains the files that would be pushed
 * Otherwise, update the repository:
   * Create `.qfs/busy` on the repository
   * Apply changes by processing the diff. All changes are made to the repository. Ideally, changes
@@ -605,22 +560,6 @@ Run `qfs push`. This does the following:
   * Upload `.qfs/db/$site` with correct metadata
   * Move `.qfs/db/repo.tmp` to `.qfs/db/repo` locally
   * Delete `.qfs/busy` from the repository
-  * If `-save-site` was given
-    * Diff the site database with the _local copy_ of the other site's database, applying the global
-      filter and both site filters. Include the `.qfs` directory per above rules, excluding the
-      other site's database. Save to a temporary location.
-    * Write a tar file whose first entry is the contents of the diff as
-      `.qfs/pending/$othersite/diff` and which contains any files that differ between the current
-      state and the local record of the other site's state. Note that the file does not exist
-      locally. It is just in the tar file. This serves the dual purpose of allowing the recipient to
-      make sure it is the intended target and of causing the file to go in a sensible place if the
-      tar file is extracted manually.
-    * This can be applied locally on the other site prior to the other site doing a pull and may reduce
-      S3 traffic. See [Pull](#pull) for a description of how this is used.
-
-Notes:
-* The `-save-site` only applies when pushing to a repository.
-* Sites always use their locally cached copies of remote state.
 
 For an explanation of these behaviors, see [Conflict Detection](#conflict-detection) below.
 
@@ -754,9 +693,7 @@ pull to have the latest files, though `qfs` makes it safe to do multiple pulls w
 pushes, we can be useful in rare situation when working on more than one system at a time or if you
 forgot to do a push from another system. Under steady state, all but one site would have this file.
 The one that doesn't have it is the active site. It's possible to push from the active site and then
-switch to any other site without having to know in advance which one it is going to be. If you do
-know which site you're going to, you can use the `-save-site` option to send the files locally and
-save network traffic.
+switch to any other site without having to know in advance which one it is going to be.
 
 Consider the following specific scenarios:
 
@@ -906,3 +843,7 @@ personally. You probably don't use `qsync`, and you can skip this.
   Also, pruned directories are entirely omitted from the database. In qsync, they appeared with a
   "special" indicating an entry count of `-1`.
 * The `diff` format is completely different.
+* The `sync` command more or less replaces `qsync_to_rsync`. Implementing the equivalent of
+  `qsync_to_rsync` with `qfs` is hard because of supporting regular expressions in filters and
+  combining multiple filters. Specifically, the logic for creating rsync include rules such that
+  something is included only when matched by all given filters is hard.
