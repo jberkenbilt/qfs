@@ -181,7 +181,25 @@ telling you what changed.
 # Known Issues
 
 * If you exclude a directory and include something below the directory, the directory itself will
-  not be included, so its permissions will not be tracked. This is not necessarily a problem.
+  not be included, so its permissions will not be tracked. This is not necessarily a problem. If we
+  fix it by adding the concept of a directory that is included without including its descendants,
+  remember the following, where "included" means directly included without implying inclusion of
+  descendants:
+  * `.` is always included
+  * `.qfs` is included by repoRules
+  * The ancestors of any explicitly included path should be included
+  * The ancestors of any path that was included by pattern or base should be included -- this one is
+    the tricky one since it is dynamic and therefore requires tracking what we've already seen and
+    also requires us to test inclusion bottom up or reverse lexical order
+* It would be nice if pushing to the repository would remove anything on the repository that is not
+  included by the repository filter. An initial attempt was made by adding the concept of a
+  `destFilter` that would would be checked separately in diff.compare with the behavior that items
+  that exist in the destination and are excluded by the destination filter would be added to `Rm`.
+  This ran into two problems:
+  * Since the destination database was generated with filters applied, those files are never even
+    seen by diff
+  * Without implicit descendant inclusion, this would cause removal of directories that contain
+    included files but are not themselves included.
 * At present, pulling contents into read-only directories will not work.
 * The `push -save-site site file.tar.gz` and `pull -site-file file.tar.gz` features are not
   implemented because the are complex, error-prone, and probably not necessary. If time proves that
@@ -242,7 +260,7 @@ qfs subcommand [options]
   * `-checks` -- output conflict checking data
 * `init-repo` -- initialize a repository
   * See [Sites](#sites)
-  * -clean-repo -- removes all objects under the prefix that are not included by the filter. This
+  * `-clean-repo` -- removes all objects under the prefix that are not included by the filter. This
     includes objects that weren't put there by qfs.
 * `init-site` -- initialize a new site
   * See [Sites](#sites)
@@ -262,9 +280,6 @@ qfs subcommand [options]
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
 * `pull-repo` -- pull the latest repository database
   * When followed by `push`, this can be used to revert the repository to the state of a site.
-* `clean-repo` -- remove files from the repository that are not matched by the filter
-  * This can be useful if things are pushed by mistake and then the repo filter is adjusted to
-    exclude them.
 * `list file` -- list all known versions of a file in the repository
   * For best results, use bucket versioning
 * `get file` -- copy a file from the repository

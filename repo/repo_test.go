@@ -637,7 +637,7 @@ func TestLifecycle(t *testing.T) {
 	writeFile(t, j("site1/.qfs/filters/prune"), start, 0o644, `
 :prune:
 junk
-:junk:(~|.junk)$
+:junk:(~|\.junk)$
 `)
 	writeFile(t, j("site1/.qfs/filters/repo"), start, 0o644, `
 :read:prune
