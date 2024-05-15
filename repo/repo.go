@@ -295,7 +295,6 @@ func makeDiff(filters []*filter.Filter) *diff.Diff {
 		diff.WithFilters(filters),
 		diff.WithNoOwnerships(true),
 		diff.WithNoSpecial(true),
-		diff.WithNoDirTimes(true),
 		diff.WithRepoRules(true),
 	)
 }

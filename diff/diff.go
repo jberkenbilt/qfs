@@ -24,7 +24,7 @@ type Diff struct {
 	repoRules    bool
 	filesOnly    bool
 	noSpecial    bool
-	noDirTimes   bool
+	nonFileTimes bool
 	noOwnerships bool
 }
 
@@ -119,9 +119,9 @@ func WithNoOwnerships(noOwnerships bool) func(*Diff) {
 	}
 }
 
-func WithNoDirTimes(noDirTimes bool) func(*Diff) {
+func WithNonFileTimes(nonFileTimes bool) func(*Diff) {
 	return func(d *Diff) {
-		d.noDirTimes = noDirTimes
+		d.nonFileTimes = nonFileTimes
 	}
 }
 
@@ -258,8 +258,8 @@ func (d *Diff) compare(r *Result, path string, data *oldNew) {
 				Info: data.fNew,
 			}
 			changes := false
-			if !d.noDirTimes {
-				if data.fOld.ModTime != data.fNew.ModTime && data.fOld.FileType == fileinfo.TypeDirectory {
+			if d.nonFileTimes {
+				if data.fOld.ModTime != data.fNew.ModTime && data.fOld.FileType != fileinfo.TypeFile {
 					t := data.fNew.ModTime.UnixMilli()
 					changes = true
 					m.DirTime = &t

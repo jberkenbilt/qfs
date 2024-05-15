@@ -40,7 +40,7 @@ type parser struct {
 	sameDev       bool
 	filesOnly     bool
 	noSpecial     bool
-	noDirTimes    bool
+	nonFileTimes  bool
 	noOwnerships  bool
 	checks        bool
 	noOp          bool
@@ -96,10 +96,10 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"top":     argTop, // only with repo:...
 		},
 		actDiff: {
-			"":              argDiffPositional,
-			"no-dir-times":  argNoDirTimes,
-			"no-ownerships": argNoOwnerships,
-			"checks":        argChecks,
+			"":               argDiffPositional,
+			"non-file-times": argNonFileTimes,
+			"no-ownerships":  argNoOwnerships,
+			"checks":         argChecks,
 		},
 		actInitRepo: {
 			"top":        argTop,
@@ -210,8 +210,8 @@ func argNoSpecial(p *parser, _ string) error {
 	return nil
 }
 
-func argNoDirTimes(p *parser, _ string) error {
-	p.noDirTimes = true
+func argNonFileTimes(p *parser, _ string) error {
+	p.nonFileTimes = true
 	return nil
 }
 
@@ -428,7 +428,7 @@ func (p *parser) doDiff() error {
 		diff.WithFilters(p.filters),
 		diff.WithFilesOnly(p.filesOnly),
 		diff.WithNoSpecial(p.noSpecial),
-		diff.WithNoDirTimes(p.noDirTimes),
+		diff.WithNonFileTimes(p.nonFileTimes),
 		diff.WithNoOwnerships(p.noOwnerships),
 	)
 	r, err := d.RunFiles(p.input1, p.input2)

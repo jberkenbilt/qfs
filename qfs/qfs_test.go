@@ -164,6 +164,7 @@ func TestScanDir(t *testing.T) {
 			"diff",
 			filesDb,
 			"-no-ownerships",
+			"-non-file-times",
 			j("files"),
 		})
 	})
@@ -172,10 +173,13 @@ func TestScanDir(t *testing.T) {
 		t.Errorf("stderr: %s", stderr)
 	}
 	sawDot := false
+	sawOtherMtime := false
 	lines = nil
 	for _, line := range strings.Split(string(stdout), "\n") {
 		if strings.HasPrefix(line, "mtime ") && strings.HasSuffix(line, " .") {
 			sawDot = true
+		} else if strings.HasPrefix(line, "mtime ") {
+			sawOtherMtime = true
 		} else if line != "" {
 			lines = append(lines, []byte(line)...)
 			lines = append(lines, '\n')
@@ -186,7 +190,7 @@ mkdir x/one
 mkdir x/one/two
 add x/one/two/b~
 `)
-	if !(sawDot && slices.Equal(lines, diffOut)) {
+	if !(sawDot && sawOtherMtime && slices.Equal(lines, diffOut)) {
 		t.Errorf("diff output: %v %s", sawDot, lines)
 	}
 }
@@ -221,7 +225,6 @@ func TestDiff(t *testing.T) {
 		[]string{
 			"qfs",
 			"diff",
-			"--no-dir-times",
 			j("1.qfs"),
 			j("top"),
 		},

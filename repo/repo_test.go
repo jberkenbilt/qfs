@@ -1340,7 +1340,6 @@ prompt: Continue?
 				j("site1/.qfs/filters/site1"),
 				"-filter",
 				j("site1/.qfs/filters/site2"),
-				"-no-dir-times",
 			})
 		},
 		"change dir1/change-in-site1\n",
@@ -1756,7 +1755,6 @@ prompt: Continue?
 				j("site1/.qfs/filters/site1"),
 				"-filter",
 				j("site1/.qfs/filters/site2"),
-				"-no-dir-times",
 			})
 		},
 		"",

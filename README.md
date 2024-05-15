@@ -203,7 +203,7 @@ qfs subcommand [options]
   * See [Diff Format](#diff-format)
   * Positional: twice: input, then output directory or database
   * _filter options_
-  * `-no-dir-times` -- ignore directory modification time changes
+  * `-non-file-times` -- include modification time changes of non-files, which are usually ignored
   * `-no-ownerships` -- ignore uid/gid changes
   * `-checks` -- output conflict checking data
 * `init-repo` -- initialize a repository
@@ -334,7 +334,7 @@ used for [conflict detection](#conflict-detection). Each line is one of the foll
 * `chmod nnnn filename` -- mode change without content change
 * `chown [nnnn]:[nnnn] filename` -- uid/gid change without content change. Omitted with
   `-no-ownerships`.
-* `mtime dir` -- a directory's modification time changed. Omitted with `-no-dir-times`.
+* `mtime dir` -- a modification time changed of other than a file; only with `-non-file-times`.
 
 # Database
 
@@ -485,7 +485,7 @@ files to be removed from the repository.
 ### Note about diff
 
 Many site operations create diffs. For site operations, all diffs are generated with
-`-no-ownerships`, `-no-dir-times`, `-no-special`, and `-checks`.
+`-no-ownerships`, `-no-special`, and `-checks`.
 
 ### Initialize/Repair Repository
 
