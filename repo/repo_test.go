@@ -19,6 +19,7 @@ import (
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/s3test"
 	"github.com/jberkenbilt/qfs/testutil"
+	"golang.org/x/exp/maps"
 	"io"
 	"io/fs"
 	"os"
@@ -452,7 +453,7 @@ func TestKeyLogic(t *testing.T) {
 		},
 	}
 	sort.Strings(expExtra)
-	extra := src.ExtraKeys()
+	extra := maps.Keys(src.ExtraKeys())
 	sort.Strings(extra)
 	if !slices.Equal(extra, expExtra) {
 		t.Errorf("wrong extra: %#v", extra)

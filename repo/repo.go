@@ -18,6 +18,7 @@ import (
 	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/traverse"
+	"golang.org/x/exp/maps"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -187,7 +188,7 @@ func (r *Repo) Init(cleanRepo bool) error {
 		return err
 	}
 	if cleanRepo {
-		extraKeys := r.src.ExtraKeys()
+		extraKeys := maps.Keys(r.src.ExtraKeys())
 		sort.Strings(extraKeys)
 		if len(extraKeys) == 0 {
 			misc.Message("no objects to clean from repository")

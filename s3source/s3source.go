@@ -46,7 +46,7 @@ type S3Source struct {
 	// Everything below requires mutex protection.
 	dbMutex   sync.Mutex
 	db        database.Database
-	extraKeys []string
+	extraKeys map[string]time.Time
 	recvMutex sync.Mutex // for local file system changes
 }
 
@@ -58,8 +58,9 @@ func New(bucket, prefix string, options ...Options) (*S3Source, error) {
 		return nil, fmt.Errorf("prefix may not end with '/'")
 	}
 	s := &S3Source{
-		bucket: bucket,
-		prefix: prefix,
+		bucket:    bucket,
+		prefix:    prefix,
+		extraKeys: map[string]time.Time{},
 	}
 	for _, fn := range options {
 		fn(s)
@@ -475,7 +476,7 @@ func (s *S3Source) Database(
 		return s.db, nil
 	}
 	s.db = database.Database{}
-	s.extraKeys = nil
+	s.extraKeys = map[string]time.Time{}
 	lister, err := s3lister.New(s3lister.WithS3Client(s.s3Client))
 	if err != nil {
 		return nil, err
@@ -514,7 +515,7 @@ func (s *S3Source) dbHandleObject(
 	fi := s.keyToFileInfo(*object.Key, *object.Size)
 	if fi == nil {
 		s.withDbLock(func() {
-			s.extraKeys = append(s.extraKeys, *object.Key)
+			s.extraKeys[*object.Key] = *object.LastModified
 		})
 		return
 	}
@@ -525,23 +526,23 @@ func (s *S3Source) dbHandleObject(
 				// This is a newer match for the same path, so keep it in favor of the one. This
 				// should never actually happen, but it could happen if we stored a new key
 				// without deleting an old one.
-				s.extraKeys = append(s.extraKeys, s.key(fi.Path, existing))
+				s.extraKeys[s.key(fi.Path, existing)] = existing.ModTime
 				s.db[fi.Path] = fi
 			} else {
 				// This is an older version than the one we already saw.
-				s.extraKeys = append(s.extraKeys, s.key(fi.Path, fi))
+				s.extraKeys[s.key(fi.Path, fi)] = fi.ModTime
 			}
 		} else {
 			included, _ := filter.IsIncluded(fi.Path, repoRules, filters...)
 			if included {
 				s.db[fi.Path] = fi
 			} else if !strings.HasPrefix(fi.Path, repofiles.Top+"/") {
-				s.extraKeys = append(s.extraKeys, s.key(fi.Path, fi))
+				s.extraKeys[s.key(fi.Path, fi)] = fi.ModTime
 			}
 		}
 	})
 }
 
-func (s *S3Source) ExtraKeys() []string {
+func (s *S3Source) ExtraKeys() map[string]time.Time {
 	return s.extraKeys
 }
