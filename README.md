@@ -210,6 +210,8 @@ qfs subcommand [options]
   * See [Sites](#sites)
   * `-clean-repo` -- removes all objects under the prefix that are not included by the filter. This
     includes objects that weren't put there by qfs.
+  * `-migrate` -- converts an area in S3 populated by `aws s3 sync` to qfs -- see [Migration From S3
+    Sync](#migration-from-s3-sync).
 * `init-site` -- initialize a new site
   * See [Sites](#sites)
 * `push`
@@ -458,6 +460,20 @@ Examples:
   prefix/login/link@l,modtime,target
   ```
 
+Why do we use this scheme instead of storing metadata on the object using S3 object metadata? There
+are a few reasons:
+* The scheme used by `qfs` allows us to determine whether a file is up-to-date in the repository
+  using the output of `ListObjectsV2` only. `qfs` incorporates a concurrent S3 bucket listing
+  algorithm that enables it to do this many times faster than a sequential bucket listing.
+* As of initial writing (May 2024), objects are stored in S3 with millisecond granularity, but only
+  `ListObjectsV2` reveals this. Other operations, including `ListObjectVersions`, `HeadObject`, and
+  `GetObject`, return the last-modified time with second granularity. If we used object metadata, a
+  `HeadObject` call would be required to read object metadata. This would vastly increase the number
+  of API calls and make `qfs` very slow. We could store the S3 time in the qfs repository database
+  and use cached information if we have it, but maintaining this cache is expensive since we don't
+  know the S3 time of a file that we have just written without calling `ListObjectsV2` to get it.
+  This vastly increases the number of API calls required when storing files.
+
 The the `.qfs/busy` object is just `.qfs/busy`, but all other repository files, including `.` and
 databases, are encoded as above. Regardless of filters, `.qfs/filters` is always included, and
 everything else in `.qfs` is excluded. The repository and site databases are copied to and from the
@@ -640,6 +656,34 @@ for every file much as would be the case with something like Dropbox.
 There is facility for manually pushing a single file to a repository. This would be hard to do while
 keeping databases in sync and avoiding drift. If things need to be restored, fix the files locally
 and then run a push.
+
+### Migration From S3 Sync
+
+If you have a collection of files that you have been backing up to S3 with `aws s3 sync`, you can
+use the `-migrate` option to `init-repo` to convert it to a `qfs` repository. You may want to
+temporarily suspend S3 versioning for this option to avoid creating an unnecessary copy of
+everything in the bucket. `aws s3 sync` copies a local file into the S3 bucket if the local file's
+modification time is more recent than the last-modified time in S3. As such, it works fine if you
+only sync from one location and never change a file in a manner that sets its modification time to a
+time earlier than the last time you ran `aws s3 sync`. For example, if you restore a file from a
+backup and its time is in the past, `aws s3 sync` would not notice that file as having changed.
+
+In migrate mode, `init-repo` scans the existing contents of the repository area, and if it finds a
+file whose key matches a local regular file and whose last-modified time is newer than the local
+file's modification time, it will call `CopyObject` on the key to copy it to the name `qfs` would
+use (with the modification time and permissions) followed by a `DeleteObject` on the original key.
+This prevents you from having to re-upload the file. A typical workflow would be
+* Suspend versioning on the S3 bucket.
+* Run `qfs init-repo -migrate`, which will move any existing keys that `aws s3 sync` would consider
+  current so that `qfs` will also consider them current.
+* Re-enable versioning on the S3 bucket.
+* Run `qfs init-repo -cleanup`, which will remove any stray files or files that `aws s3 sync` would
+  consider to be out-of-date.
+* Run `qfs push`, which will push directories, links, and any subsequently modified files to the
+  repository.
+
+After this, you can use `qfs` instead of `aws s3 sync` to keep the area backed up while efficiently
+maintaining file metadata.
 
 ## Conflict Detection
 
