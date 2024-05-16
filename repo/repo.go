@@ -52,6 +52,14 @@ type PullConfig struct {
 	LocalFilter bool
 }
 
+type InitMode int
+
+const (
+	InitNormal InitMode = iota
+	InitCleanRepo
+	InitMigrate
+)
+
 const numWorkers = 10
 
 var s3Re = regexp.MustCompile(`^s3://([^/]+)/(.*)\n?$`)
@@ -150,13 +158,13 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 	return fileinfo.NewPath(localsource.New(r.localTop), relPath)
 }
 
-func (r *Repo) Init(cleanRepo bool) error {
+func (r *Repo) Init(mode InitMode) error {
 	err := r.loadRepoDb()
 	if err != nil {
 		// TEST: not covered
 		return err
 	}
-	if r.initialized && !cleanRepo {
+	if r.initialized && mode != InitCleanRepo {
 		if !misc.Prompt("Repository is already initialized. Rebuild database?") {
 			return fmt.Errorf(
 				"repository is already initialized; delete s3://%s/%s/%s to re-initialize",
@@ -173,7 +181,7 @@ func (r *Repo) Init(cleanRepo bool) error {
 		return err
 	}
 	var filters []*filter.Filter
-	if cleanRepo {
+	if mode == InitCleanRepo {
 		repoFilterPath := fileinfo.NewPath(r.src, repofiles.SiteFilter(repofiles.RepoSite))
 		f := filter.New()
 		err = f.ReadFile(repoFilterPath, false)
@@ -187,7 +195,7 @@ func (r *Repo) Init(cleanRepo bool) error {
 		// TEST: NOT COVERED
 		return err
 	}
-	if cleanRepo {
+	if mode == InitCleanRepo {
 		extraKeys := maps.Keys(r.src.ExtraKeys())
 		sort.Strings(extraKeys)
 		if len(extraKeys) == 0 {

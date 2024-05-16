@@ -498,7 +498,7 @@ func TestRepo_IsInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	err = r.Init(false)
+	err = r.Init(repo.InitCleanRepo)
 	var nsb *types.NoSuchBucket
 	if err == nil || !errors.As(err, &nsb) {
 		t.Errorf("wrong error: %v", err)

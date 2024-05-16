@@ -45,7 +45,7 @@ type parser struct {
 	checks        bool
 	noOp          bool
 	localFilter   bool
-	cleanRepo     bool
+	initMode      repo.InitMode
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -104,6 +104,7 @@ var argTables = func() map[actionKey]map[string]argHandler {
 		actInitRepo: {
 			"top":        argTop,
 			"clean-repo": argCleanRepo,
+			"migrate":    argMigrate,
 		},
 		actPush: {
 			"top":     argTop,
@@ -176,7 +177,18 @@ func argTop(p *parser, arg string) error {
 }
 
 func argCleanRepo(p *parser, _ string) error {
-	p.cleanRepo = true
+	if p.initMode != repo.InitNormal {
+		return fmt.Errorf("only one init-repo mode option may be given")
+	}
+	p.initMode = repo.InitCleanRepo
+	return nil
+}
+
+func argMigrate(p *parser, _ string) error {
+	if p.initMode != repo.InitNormal {
+		return fmt.Errorf("only one init-repo mode option may be given")
+	}
+	p.initMode = repo.InitMigrate
 	return nil
 }
 
@@ -452,7 +464,7 @@ func (p *parser) doInitRepo() error {
 	if err != nil {
 		return err
 	}
-	return r.Init(p.cleanRepo)
+	return r.Init(p.initMode)
 }
 
 func (p *parser) doPull() error {
