@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/qfs"
 	"io"
 	"os"
@@ -29,7 +30,6 @@ func Check(t *testing.T, err error) {
 }
 
 func checkLinesInternal(t *testing.T, sorted bool, filter func(string) string, cmd []string, expLines []string) {
-	t.Helper()
 	stdout, stderr := WithStdout(func() {
 		Check(t, qfs.Run(cmd))
 	})
@@ -57,10 +57,12 @@ func checkLinesInternal(t *testing.T, sorted bool, filter func(string) string, c
 }
 
 func CheckLines(t *testing.T, cmd []string, expLines []string) {
+	t.Helper()
 	checkLinesInternal(t, false, nil, cmd, expLines)
 }
 
 func CheckLinesSorted(t *testing.T, filter func(string) string, cmd []string, expLines []string) {
+	t.Helper()
 	checkLinesInternal(t, true, filter, cmd, expLines)
 }
 
@@ -98,4 +100,52 @@ func ExpStdout(t *testing.T, fn func(), expStdout, expStderr string) {
 	if expStderr != string(stderr) {
 		t.Errorf("wrong stderr: %s", stderr)
 	}
+}
+
+func CaptureMessages() (cleanup func(), checkMessages func(*testing.T, []string)) {
+	// Monitor messages. Send a magic string to catch up send messages accumulated so
+	// far.
+	msgChan := make(chan []string, 1)
+	misc.TestMessageChannel = make(chan string, 5)
+	const MsgCatchup = "!CHECK!"
+	go func() {
+		var accumulated []string
+		for m := range misc.TestMessageChannel {
+			if m == MsgCatchup {
+				msgChan <- accumulated
+				accumulated = nil
+			} else {
+				accumulated = append(accumulated, m)
+			}
+		}
+	}()
+	getMessages := func() []string {
+		misc.Message(MsgCatchup)
+		return <-msgChan
+	}
+	cleanup = func() {
+		close(misc.TestMessageChannel)
+		misc.TestMessageChannel = nil
+	}
+	checkMessages = func(t *testing.T, exp []string) {
+		t.Helper()
+		messages := getMessages()
+		mActual := map[string]struct{}{}
+		for _, m := range messages {
+			mActual[m] = struct{}{}
+		}
+		mExp := map[string]struct{}{}
+		for _, m := range exp {
+			if _, ok := mActual[m]; !ok {
+				t.Errorf("missing message: %s", m)
+			}
+			mExp[m] = struct{}{}
+		}
+		for _, m := range messages {
+			if _, ok := mExp[m]; !ok {
+				t.Errorf("extra message: %s", m)
+			}
+		}
+	}
+	return
 }

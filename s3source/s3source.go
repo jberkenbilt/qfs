@@ -96,16 +96,7 @@ func (s *S3Source) FullPath(path string) string {
 }
 
 func (s *S3Source) keyToFileInfo(key string, size int64) *fileinfo.FileInfo {
-	prefix := s.prefix
-	if prefix != "" {
-		prefix += "/"
-	}
-	if !strings.HasPrefix(key, prefix) {
-		// TEST: NOT COVERED. ListObjectsV2 won't return a key that doesn't start with
-		// the requested prefix.
-		panic("key doesn't start with prefix")
-	}
-	key = key[len(prefix):]
+	key = misc.RemovePrefix(key, s.prefix)
 	m := pathRe.FindStringSubmatch(key)
 	if m == nil {
 		return nil
@@ -158,7 +149,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	if dbEntry != nil {
 		return dbEntry, nil
 	}
-	prefix := s.key(path, nil)
+	prefix := s.KeyFromPath(path, nil)
 	listInput := &s3.ListObjectsV2Input{
 		Bucket: &s.bucket,
 		Prefix: &prefix,
@@ -196,7 +187,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	return fi, nil
 }
 
-func (s *S3Source) key(path string, fi *fileinfo.FileInfo) string {
+func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo) string {
 	key := s.prefix
 	if key != "" {
 		key += "/"
@@ -219,7 +210,7 @@ func (s *S3Source) Open(path string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	key := s.key(path, info)
+	key := s.KeyFromPath(path, info)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -237,7 +228,7 @@ func (s *S3Source) Remove(path string) error {
 		// Make Remove idempotent
 		return nil
 	}
-	key := s.key(path, info)
+	key := s.KeyFromPath(path, info)
 	input := &s3.DeleteObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -290,7 +281,7 @@ func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
 	var keys []string
 	for _, fi := range toDelete {
 		misc.Message("removing %s", fi.Path)
-		keys = append(keys, s.key(fi.Path, fi))
+		keys = append(keys, s.KeyFromPath(fi.Path, fi))
 	}
 	err := s.RemoveKeys(keys)
 	if err != nil {
@@ -318,7 +309,7 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	if err != nil {
 		return err
 	}
-	key := s.key(repoPath, info)
+	key := s.KeyFromPath(repoPath, info)
 	var body io.Reader
 	switch info.FileType {
 	case fileinfo.TypeFile:
@@ -444,7 +435,7 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = f.Close() }()
-	key := s.key(repoPath, srcInfo)
+	key := s.KeyFromPath(repoPath, srcInfo)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -526,18 +517,18 @@ func (s *S3Source) dbHandleObject(
 				// This is a newer match for the same path, so keep it in favor of the one. This
 				// should never actually happen, but it could happen if we stored a new key
 				// without deleting an old one.
-				s.extraKeys[s.key(fi.Path, existing)] = existing.ModTime
+				s.extraKeys[s.KeyFromPath(fi.Path, existing)] = existing.ModTime
 				s.db[fi.Path] = fi
 			} else {
 				// This is an older version than the one we already saw.
-				s.extraKeys[s.key(fi.Path, fi)] = fi.ModTime
+				s.extraKeys[s.KeyFromPath(fi.Path, fi)] = fi.ModTime
 			}
 		} else {
 			included, _ := filter.IsIncluded(fi.Path, repoRules, filters...)
 			if included {
 				s.db[fi.Path] = fi
 			} else if !strings.HasPrefix(fi.Path, repofiles.Top+"/") {
-				s.extraKeys[s.key(fi.Path, fi)] = fi.ModTime
+				s.extraKeys[s.KeyFromPath(fi.Path, fi)] = fi.ModTime
 			}
 		}
 	})

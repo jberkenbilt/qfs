@@ -677,10 +677,12 @@ This prevents you from having to re-upload the file. A typical workflow would be
 * Run `qfs init-repo -migrate`, which will move any existing keys that `aws s3 sync` would consider
   current so that `qfs` will also consider them current.
 * Re-enable versioning on the S3 bucket.
-* Run `qfs init-repo -cleanup`, which will remove any stray files or files that `aws s3 sync` would
-  consider to be out-of-date.
-* Run `qfs push`, which will push directories, links, and any subsequently modified files to the
-  repository.
+* Set up the repository and site filters.
+* Run `qfs push`. This will push everything that wasn't migrated, including directories, links, and
+  qfs filters.
+* Run `qfs init-repo -cleanup`. This will remove any stray files including files that `aws s3 sync`
+  would have considered to be out-of-date. This has to be done after the initial push so the
+  repository filter is there.
 
 After this, you can use `qfs` instead of `aws s3 sync` to keep the area backed up while efficiently
 maintaining file metadata.

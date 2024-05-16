@@ -20,6 +20,7 @@ import (
 	"github.com/jberkenbilt/qfs/traverse"
 	"golang.org/x/exp/maps"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,6 +159,122 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 	return fileinfo.NewPath(localsource.New(r.localTop), relPath)
 }
 
+func (r *Repo) cleanRepo() error {
+	extraKeys := maps.Keys(r.src.ExtraKeys())
+	sort.Strings(extraKeys)
+	if len(extraKeys) == 0 {
+		misc.Message("no objects to clean from repository")
+	} else {
+		misc.Message("----- keys to remove -----")
+		for _, k := range extraKeys {
+			fmt.Println(k)
+		}
+		misc.Message("-----")
+		if misc.Prompt("Remove above keys?") {
+			err := r.src.RemoveKeys(extraKeys)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("not removing extra keys")
+		}
+	}
+	return nil
+}
+
+func (r *Repo) migrateRepo() error {
+	toCopy := map[string]string{}
+	for key, updateTime := range r.src.ExtraKeys() {
+		path := misc.RemovePrefix(key, r.prefix)
+		local := r.localPath(path)
+		info, err := local.FileInfo()
+		if err != nil {
+			// TEST: NOT COVERED
+			continue
+		}
+		if info.ModTime.Before(updateTime) {
+			// aws s3 sync would consider this file to be up-to-date since its modification
+			// time is older than the S3 update time.
+			newKey := r.src.KeyFromPath(path, info)
+			toCopy[key] = newKey
+		}
+	}
+	if len(toCopy) == 0 {
+		// TEST: NOT COVERED
+		misc.Message("no keys to migrate")
+		return nil
+	}
+	oldKeys := maps.Keys(toCopy)
+	sort.Strings(oldKeys)
+	misc.Message("----- keys to migrate -----")
+	for _, oldKey := range oldKeys {
+		fmt.Printf("%s -> %s\n", oldKey, toCopy[oldKey])
+	}
+	misc.Message("-----")
+	if !misc.Prompt("Continue?") {
+		return fmt.Errorf("exiting")
+	}
+
+	type toCopyData struct {
+		old string
+		new string
+	}
+	c := make(chan *toCopyData, numWorkers)
+	go func() {
+		for oldKey, newKey := range toCopy {
+			c <- &toCopyData{
+				old: oldKey,
+				new: newKey,
+			}
+		}
+		close(c)
+	}()
+	misc.DoConcurrently(
+		func(c chan *toCopyData, errorChan chan error) {
+			for x := range c {
+				misc.Message("moving %s -> %s", x.old, x.new)
+				copyInput := &s3.CopyObjectInput{
+					Bucket:     &r.bucket,
+					CopySource: aws.String(url.PathEscape(fmt.Sprintf("%s/%s", r.bucket, x.old))),
+					Key:        &x.new,
+				}
+				// There's no rename in S3, so we copy the object and, if successful, delete the old one.
+				_, err := r.s3Client.CopyObject(ctx, copyInput)
+				if err != nil {
+					// TEST: NOT COVERED
+					errorChan <- fmt.Errorf("copy %s -> %s: %w", x.old, x.new, err)
+					continue
+				}
+				deleteInput := &s3.DeleteObjectInput{
+					Bucket: &r.bucket,
+					Key:    &x.old,
+				}
+				_, err = r.s3Client.DeleteObject(ctx, deleteInput)
+				if err != nil {
+					// TEST: NOT COVERED
+					errorChan <- fmt.Errorf("delete %s: %w", x.old, err)
+					continue
+				}
+			}
+		},
+		func(e error) {
+			// TEST: NOT COVERED. This doesn't have to be an error; a later init-repo
+			// -cleanup and push will get everything in sync. There are some restrictions to
+			// CopyObject, such as a 5 GB file limit.
+			misc.Message("WARNING: %v", e)
+		},
+		c,
+		numWorkers,
+	)
+	var err error
+	r.repoDb, err = r.src.Database(true, true, nil)
+	if err != nil {
+		// TEST: NOT COVERED
+		return err
+	}
+	return nil
+}
+
 func (r *Repo) Init(mode InitMode) error {
 	err := r.loadRepoDb()
 	if err != nil {
@@ -196,24 +313,14 @@ func (r *Repo) Init(mode InitMode) error {
 		return err
 	}
 	if mode == InitCleanRepo {
-		extraKeys := maps.Keys(r.src.ExtraKeys())
-		sort.Strings(extraKeys)
-		if len(extraKeys) == 0 {
-			misc.Message("no objects to clean from repository")
-		} else {
-			misc.Message("----- keys to remove -----")
-			for _, k := range extraKeys {
-				fmt.Println(k)
-			}
-			misc.Message("-----")
-			if misc.Prompt("Remove above keys?") {
-				err = r.src.RemoveKeys(extraKeys)
-				if err != nil {
-					return err
-				}
-			} else {
-				misc.Message("not removing extra keys")
-			}
+		err = r.cleanRepo()
+		if err != nil {
+			return err
+		}
+	} else if mode == InitMigrate {
+		err = r.migrateRepo()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -440,6 +547,7 @@ func (r *Repo) Push(config *PushConfig) error {
 		_ = diffResult.WriteDiff(os.Stdout, false)
 		misc.Message("-----")
 		if !config.NoOp && !misc.Prompt("Continue?") {
+			// TEST: NOT COVERED
 			return fmt.Errorf("exiting")
 		}
 	} else {

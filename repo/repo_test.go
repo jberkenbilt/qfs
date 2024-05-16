@@ -505,6 +505,128 @@ func TestRepo_IsInitialized(t *testing.T) {
 	}
 }
 
+func TestMigrate(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+		misc.TestMessageChannel = nil
+	}()
+	misc.TestPromptChannel = make(chan string, 5)
+	cleanupMessages, checkMessages := testutil.CaptureMessages()
+	defer cleanupMessages()
+	qfs.S3Client = s3Client
+	defer func() { qfs.S3Client = nil }()
+	setUpTestBucket()
+	tmp := t.TempDir()
+	j := func(path string) string { return filepath.Join(tmp, path) }
+	// Create files locally and copy some of them to the repository area such that
+	// the S3 time of some but not all is more recent than the local time.
+	now := time.Now().UnixMilli()
+	before := int64(1715856724523) // some time in the past
+	after := now + 3600000
+	writeFile(t, j(".qfs/repo"), now, 0o644, "s3://"+TestBucket+"/repo")
+	writeFile(t, j("one/in-sync"), before, 0o644, "")
+	writeFile(t, j("two/also-in-sync"), before, 0o444, "")
+	writeFile(t, j("one/out-of-date"), after, 0o664, "")
+	testutil.Check(t, os.Symlink("one", j("link")))
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(TestBucket),
+	}
+	for _, path := range []string{"one/in-sync", "one/out-of-date", "two/also-in-sync"} {
+		input.Key = aws.String("repo/" + path)
+		f, err := os.Open(j(path))
+		testutil.Check(t, err)
+		input.Body = f
+		_, err = s3Client.PutObject(ctx, input)
+		_ = f.Close()
+		testutil.Check(t, err)
+	}
+
+	// Migrate keys we can migrate.
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			_ = qfs.Run([]string{"qfs", "init-repo", "-migrate", "-top", tmp})
+		},
+		`repo/one/in-sync -> repo/one/in-sync@f,1715856724523,0644
+repo/two/also-in-sync -> repo/two/also-in-sync@f,1715856724523,0444
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages(t, []string{
+		"----- keys to migrate -----",
+		"-----",
+		"moving repo/one/in-sync -> repo/one/in-sync@f,1715856724523,0644",
+		"moving repo/two/also-in-sync -> repo/two/also-in-sync@f,1715856724523,0444",
+		"uploading repository database",
+	},
+	)
+
+	// Do an initial push. This will push everything that was not migrated. This has
+	// to be done before init-repo -cleanup so the repo filter will be there.
+	writeFile(t, j(".qfs/site"), now, 0o644, "site\n")
+	writeFile(t, j(".qfs/filters/repo"), now, 0o644, ":include:\n.\n")
+	writeFile(t, j(".qfs/filters/site"), now, 0o644, ":read:repo\n")
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			_ = qfs.Run([]string{"qfs", "push", "-top", tmp})
+		},
+		`mkdir .
+mkdir .qfs
+add .qfs/filters/repo
+add .qfs/filters/site
+add link
+mkdir one
+add one/out-of-date
+mkdir two
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages(t, []string{
+		"local copy of repository database is current",
+		"generating local database",
+		"no conflicts found",
+		"----- changes to push -----",
+		"-----",
+		"storing .",
+		"storing .qfs",
+		"storing .qfs/filters/repo",
+		"storing .qfs/filters/site",
+		"storing link",
+		"storing one",
+		"storing one/out-of-date",
+		"storing two",
+		"uploading site database",
+		"uploading repository database",
+	},
+	)
+
+	// Delete keys we couldn't migrate.
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y"
+			_ = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", tmp})
+		},
+		`repo/one/out-of-date
+prompt: Remove above keys?
+`,
+		"",
+	)
+	misc.TestPromptChannel <- "y" // Continue?
+	checkMessages(t, []string{
+		"local copy of repository database is current",
+		"----- keys to remove -----",
+		"-----",
+		"uploading repository database",
+	},
+	)
+}
+
 func TestLifecycle(t *testing.T) {
 	defer func() {
 		misc.TestPromptChannel = nil
@@ -520,47 +642,8 @@ func TestLifecycle(t *testing.T) {
 	// to pay since it is essential to exercise that qfs works properly over a long
 	// series of transactions.
 
-	// Monitor messages. Send a magic string to catch up send messages accumulated so
-	// far.
-	msgChan := make(chan []string, 1)
-	misc.TestMessageChannel = make(chan string, 5)
-	defer close(misc.TestMessageChannel)
-	const MsgCatchup = "!CHECK!"
-	go func() {
-		var accumulated []string
-		for m := range misc.TestMessageChannel {
-			if m == MsgCatchup {
-				msgChan <- accumulated
-				accumulated = nil
-			} else {
-				accumulated = append(accumulated, m)
-			}
-		}
-	}()
-	getMessages := func() []string {
-		misc.Message(MsgCatchup)
-		return <-msgChan
-	}
-	checkMessages := func(exp []string) {
-		t.Helper()
-		messages := getMessages()
-		mActual := map[string]struct{}{}
-		for _, m := range messages {
-			mActual[m] = struct{}{}
-		}
-		mExp := map[string]struct{}{}
-		for _, m := range exp {
-			if _, ok := mActual[m]; !ok {
-				t.Errorf("missing message: %s", m)
-			}
-			mExp[m] = struct{}{}
-		}
-		for _, m := range messages {
-			if _, ok := mExp[m]; !ok {
-				t.Errorf("extra message: %s", m)
-			}
-		}
-	}
+	cleanupMessages, checkMessages := testutil.CaptureMessages()
+	defer cleanupMessages()
 
 	// Create a directory for a site.
 	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0o777))
@@ -587,7 +670,7 @@ func TestLifecycle(t *testing.T) {
 	if err != nil {
 		t.Errorf("init: %v", err)
 	}
-	checkMessages([]string{"uploading repository database"})
+	checkMessages(t, []string{"uploading repository database"})
 
 	// Re-initialize and abort
 	misc.TestPromptChannel = make(chan string, 5)
@@ -603,7 +686,7 @@ func TestLifecycle(t *testing.T) {
 		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
-	checkMessages([]string{"local copy of repository database is current"})
+	checkMessages(t, []string{"local copy of repository database is current"})
 
 	// Re-initialize
 	misc.TestPromptChannel <- "y"
@@ -618,7 +701,7 @@ func TestLifecycle(t *testing.T) {
 		"prompt: Repository is already initialized. Rebuild database?\n",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"uploading repository database",
 	})
@@ -726,7 +809,7 @@ prompt: Continue?
 	)
 	// Lines in checkMessages are in a non-deterministic order, but checkMessages
 	// sorts expected and actual.
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -774,7 +857,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"downloading latest repository database",
 		"no conflicts found",
@@ -798,7 +881,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",
@@ -826,7 +909,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"downloading latest repository database",
 		"repository doesn't contain a database for this site",
 		"site filter does not exist on the repository; trying local copy",
@@ -852,7 +935,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"downloading latest repository database",
 		"repository doesn't contain a database for this site",
 		"site filter does not exist on the repository; trying local copy",
@@ -906,7 +989,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"site filter does not exist on the repository; trying local copy",
@@ -940,7 +1023,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"site filter does not exist on the repository; trying local copy",
@@ -1024,7 +1107,7 @@ chmod 0750 dir2/dir-to-chmod
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1081,7 +1164,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1245,7 +1328,7 @@ chmod 0750 dir2/dir-to-chmod
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"downloading latest repository database",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1297,7 +1380,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"downloading latest repository database",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1369,7 +1452,7 @@ dir3
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1388,7 +1471,7 @@ add dir3/only-in-site1
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"loading site database from repository",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1409,7 +1492,7 @@ add dir3/only-in-site1
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1444,7 +1527,7 @@ change dir2/dir-then-file
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1467,7 +1550,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1492,7 +1575,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1520,7 +1603,7 @@ conflict: dir2/dir-then-file
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"downloading latest repository database",
 	})
@@ -1540,7 +1623,7 @@ prompt: Conflicts detected. Exit?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"loading site database from repository",
 		"downloading latest repository database",
 	})
@@ -1566,7 +1649,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"loading site database from repository",
 		"downloading latest repository database",
 		"overriding conflicts",
@@ -1593,7 +1676,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"local copy of repository database is current",
 		"no conflicts found",
@@ -1620,7 +1703,7 @@ prompt: Conflicts detected. Exit?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"downloading latest repository database",
 	})
@@ -1644,7 +1727,7 @@ prompt: Conflicts detected. Exit?
 		"",
 		"",
 	)
-	checkMessages([]string{"downloading latest repository database"})
+	checkMessages(t, []string{"downloading latest repository database"})
 	deleteInput := &s3.DeleteObjectInput{
 		Bucket: aws.String(TestBucket),
 		Key:    aws.String("home/.qfs/busy"),
@@ -1670,7 +1753,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"downloading latest repository database",
 		"overriding conflicts",
@@ -1693,7 +1776,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1714,7 +1797,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{"local copy of repository database is current"})
+	checkMessages(t, []string{"local copy of repository database is current"})
 	_, err = s3Client.DeleteObject(ctx, deleteInput)
 	testutil.Check(t, err)
 
@@ -1733,7 +1816,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"loading site database from repository",
 		"downloading latest repository database",
 		"no conflicts found",
@@ -1761,7 +1844,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages(nil)
+	checkMessages(t, nil)
 
 	// Clean repo -- should be clean
 	testutil.ExpStdout(
@@ -1775,7 +1858,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"no objects to clean from repository",
 		"uploading repository database",
@@ -1804,7 +1887,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"downloading latest repository database",
 		"no conflicts found",
@@ -1839,7 +1922,7 @@ $`)
 	if !re.Match(stdout) {
 		t.Errorf("wrong stdout: %s", stdout)
 	}
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"----- keys to remove -----",
 		"-----",
@@ -1858,7 +1941,7 @@ $`)
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",
@@ -1878,7 +1961,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"loading site database from repository",
 		"downloading latest repository database",
 		"no conflicts found",
@@ -1901,7 +1984,7 @@ prompt: Continue?
 		"",
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"generating local database",
 		"uploading site database",
 	})
@@ -1919,7 +2002,7 @@ prompt: Continue?
 `,
 		"",
 	)
-	checkMessages([]string{
+	checkMessages(t, []string{
 		"local copy of repository database is current",
 		"loading site database from repository",
 		"no conflicts found",

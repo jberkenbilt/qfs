@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -68,4 +69,19 @@ func Message(format string, args ...any) {
 	} else {
 		fmt.Printf("%s: %s\n", progName, fmt.Sprintf(format, args...))
 	}
+}
+
+// RemovePrefix removes prefix/ from the beginning of a key that is known to
+// start with prefix/.
+func RemovePrefix(key string, prefix string) string {
+	if prefix == "" {
+		return key
+	}
+	prefix += "/"
+	if !strings.HasPrefix(key, prefix) {
+		// TEST: NOT COVERED. ListObjectsV2 won't return a key that doesn't start with
+		// the requested prefix.
+		panic("key doesn't start with prefix")
+	}
+	return key[len(prefix):]
 }
