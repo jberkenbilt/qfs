@@ -680,8 +680,8 @@ This prevents you from having to re-upload the file. A typical workflow would be
 * Set up the repository and site filters.
 * Run `qfs push`. This will push everything that wasn't migrated, including directories, links, and
   qfs filters.
-* Run `qfs init-repo -cleanup`. This will remove any stray files including files that `aws s3 sync`
-  would have considered to be out-of-date. This has to be done after the initial push so the
+* Run `qfs init-repo -clean-repo`. This will remove any stray files including files that `aws s3
+  sync` would have considered to be out-of-date. This has to be done after the initial push so the
   repository filter is there.
 
 After this, you can use `qfs` instead of `aws s3 sync` to keep the area backed up while efficiently
