@@ -7,6 +7,7 @@ import (
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/scan"
 	"io/fs"
@@ -120,7 +121,7 @@ func ApplyChanges(
 					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)
 				}
 				if downloaded && info.FileType != fileinfo.TypeDirectory {
-					misc.Message("downloaded %s", info.Path)
+					misc.Message("copied %s", info.Path)
 				}
 			}
 		},
@@ -182,6 +183,17 @@ func (s *Sync) Sync() error {
 	}
 	if s.noOp {
 		_ = diffResult.WriteDiff(os.Stdout, false)
+	} else {
+		err = ApplyChanges(
+			localsource.New(s.srcDir),
+			localsource.New(s.destDir),
+			diffResult,
+			nil,
+			10,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

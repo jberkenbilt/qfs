@@ -56,7 +56,6 @@ for i in all:
       `init-repo -clean-repo`.
   * list-versions
   * get
-  * sync
 * Remove remnants of `-local`, `-save-site` and `-site-file`
 
 ----------

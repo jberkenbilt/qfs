@@ -629,6 +629,31 @@ prompt: Remove above keys?
 	)
 }
 
+func checkSync(t *testing.T, srcDir, destDir, filter string) {
+	t.Helper()
+	tmp := t.TempDir()
+	j := func(path string) string {
+		return filepath.Join(tmp, path)
+	}
+	// Create a file so diff output won't be empty
+	marker := filepath.Join(destDir, "z")
+	writeFile(t, marker, time.Now().UnixMilli(), 0644, "")
+	defer func() { _ = os.Remove(marker) }()
+	testutil.Check(t, qfs.Run([]string{"qfs", "scan", srcDir, "-filter", filter, "-db", j("src-db")}))
+	testutil.Check(t, qfs.Run([]string{"qfs", "scan", destDir, "-db", j("dest-db")}))
+	testutil.ExpStdout(
+		t,
+		func() {
+			err := qfs.Run([]string{"qfs", "diff", j("src-db"), j("dest-db")})
+			if err != nil {
+				t.Errorf(err.Error())
+			}
+		},
+		"add z\n",
+		"",
+	)
+}
+
 func TestLifecycle(t *testing.T) {
 	defer func() {
 		misc.TestPromptChannel = nil
@@ -894,6 +919,20 @@ prompt: Continue?
 		"uploading site database",
 	})
 
+	testutil.Check(t, os.MkdirAll(j("sync"), 0777))
+	err = qfs.Run([]string{
+		"qfs",
+		"sync",
+		"-n",
+		"-filter",
+		j("site1/.qfs/filters/site1"),
+		j("site1"),
+		j("sync"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "sync doesn't work with filters that have") {
+		t.Errorf("wrong error: %v", err)
+	}
+
 	// Change file on site1 without pushing -- will be pushed later.
 	writeFile(t, j("site1/dir1/change-in-site1"), start, 0o644, "")
 
@@ -973,9 +1012,9 @@ prompt: Continue?
 		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
-		"downloaded .qfs/filters/repo",
-		"downloaded .qfs/filters/site1",
-		"downloaded .qfs/filters/prune",
+		"copied .qfs/filters/repo",
+		"copied .qfs/filters/site1",
+		"copied .qfs/filters/prune",
 		"updated repository copy of site database to reflect changes",
 	})
 
@@ -1027,18 +1066,18 @@ prompt: Continue?
 		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
-		"downloaded dir1/change-in-site1",
-		"downloaded dir1/file-then-dir",
-		"downloaded dir1/file-then-link",
-		"downloaded dir1/file-to-change-and-chmod",
-		"downloaded dir1/file-to-chmod",
-		"downloaded dir1/file-to-remove",
-		"downloaded dir1/ro-file-to-change",
-		"downloaded dir1/looks-like-repo@l,1715443064543,0777",
-		"downloaded dir2/link-then-directory",
-		"downloaded dir2/link-then-file",
-		"downloaded dir2/link-to-change",
-		"downloaded dir2/link-to-remove",
+		"copied dir1/change-in-site1",
+		"copied dir1/file-then-dir",
+		"copied dir1/file-then-link",
+		"copied dir1/file-to-change-and-chmod",
+		"copied dir1/file-to-chmod",
+		"copied dir1/file-to-remove",
+		"copied dir1/ro-file-to-change",
+		"copied dir1/looks-like-repo@l,1715443064543,0777",
+		"copied dir2/link-then-directory",
+		"copied dir2/link-then-file",
+		"copied dir2/link-to-change",
+		"copied dir2/link-to-remove",
 		"updated repository copy of site database to reflect changes",
 	})
 
@@ -1061,6 +1100,72 @@ prompt: Continue?
 		"no conflicts found",
 		"no changes to pull",
 	})
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"sync",
+				"-n",
+				"-filter",
+				j("site2/.qfs/filters/site2"),
+				j("site2"),
+				j("sync"),
+			})
+		},
+		`mkdir dir1
+add dir1/change-in-site1
+add dir1/file-then-dir
+add dir1/file-then-link
+add dir1/file-to-change-and-chmod
+add dir1/file-to-chmod
+add dir1/file-to-remove
+add dir1/looks-like-repo@l,1715443064543,0777
+add dir1/ro-file-to-change
+mkdir dir2
+mkdir dir2/dir-then-file
+mkdir dir2/dir-then-link
+mkdir dir2/dir-to-chmod
+mkdir dir2/dir-to-remove
+add dir2/link-then-directory
+add dir2/link-then-file
+add dir2/link-to-change
+add dir2/link-to-remove
+`,
+		"",
+	)
+	checkMessages(t, nil)
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"sync",
+				"-filter",
+				j("site2/.qfs/filters/site2"),
+				j("site2"),
+				j("sync"),
+			})
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{
+		"copied dir1/change-in-site1",
+		"copied dir1/file-then-dir",
+		"copied dir1/file-then-link",
+		"copied dir1/file-to-change-and-chmod",
+		"copied dir1/file-to-chmod",
+		"copied dir1/file-to-remove",
+		"copied dir1/looks-like-repo@l,1715443064543,0777",
+		"copied dir1/ro-file-to-change",
+		"copied dir2/link-then-directory",
+		"copied dir2/link-then-file",
+		"copied dir2/link-to-change",
+		"copied dir2/link-to-remove",
+	})
+	checkSync(t, j("site2"), j("sync"), j("site2/.qfs/filters/site2"))
 
 	// In the next stage of testing, exercise that changes are carried across.
 	// Advance the timestamps so changes are detected in case the test suite runs
@@ -1434,16 +1539,16 @@ prompt: Continue?
 		"removing dir2/link-then-directory",
 		"removing dir2/link-then-file",
 		"removing dir2/link-to-remove",
-		"downloaded .qfs/filters/site2",
-		"downloaded dir1/file-then-link",
-		"downloaded dir2/dir-then-file",
-		"downloaded dir2/dir-then-link",
-		"downloaded dir2/link-then-file",
-		"downloaded dir2/new-file",
-		"downloaded dir2/new-link",
-		"downloaded dir1/file-to-change-and-chmod",
-		"downloaded dir1/ro-file-to-change",
-		"downloaded dir2/link-to-change",
+		"copied .qfs/filters/site2",
+		"copied dir1/file-then-link",
+		"copied dir2/dir-then-file",
+		"copied dir2/dir-then-link",
+		"copied dir2/link-then-file",
+		"copied dir2/new-file",
+		"copied dir2/new-link",
+		"copied dir1/file-to-change-and-chmod",
+		"copied dir1/ro-file-to-change",
+		"copied dir2/link-to-change",
 		"chmod 0600 dir1/file-to-chmod",
 		"chmod 0750 dir2/dir-to-chmod",
 		"updated repository copy of site database to reflect changes",
@@ -1694,7 +1799,7 @@ prompt: Continue?
 		"----- changes to pull -----",
 		"-----",
 		"removing dir2/dir-then-file",
-		"downloaded dir1/change-in-site1",
+		"copied dir1/change-in-site1",
 		"updated repository copy of site database to reflect changes",
 	})
 
@@ -1860,9 +1965,47 @@ prompt: Continue?
 		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
-		"downloaded dir1/change-in-site1",
+		"copied dir1/change-in-site1",
 		"updated repository copy of site database to reflect changes",
 	})
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"sync",
+				"-filter",
+				j("site2/.qfs/filters/site2"),
+				j("site2"),
+				j("sync"),
+			})
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{
+		"removing dir1/file-then-dir",
+		"removing dir1/file-then-link",
+		"removing dir1/file-to-remove",
+		"removing dir2/dir-then-link",
+		"removing dir2/dir-to-remove",
+		"removing dir2/link-then-directory",
+		"removing dir2/link-then-file",
+		"removing dir2/link-to-remove",
+		"copied dir1/file-then-link",
+		"copied dir2/dir-then-link",
+		"copied dir2/link-to-change",
+		"copied dir2/new-link",
+		"copied dir2/new-file",
+		"copied dir1/file-to-change-and-chmod",
+		"copied dir2/link-then-file",
+		"copied dir4/only-site-2",
+		"copied dir1/change-in-site1",
+		"copied dir1/ro-file-to-change",
+		"chmod 0600 dir1/file-to-chmod",
+		"chmod 0750 dir2/dir-to-chmod",
+	})
+	checkSync(t, j("site2"), j("sync"), j("site2/.qfs/filters/site2"))
 
 	// Back in sync
 	testutil.ExpStdout(
@@ -2007,7 +2150,7 @@ prompt: Continue?
 		"no conflicts found",
 		"----- changes to pull -----",
 		"-----",
-		"downloaded .qfs/filters/repo",
+		"copied .qfs/filters/repo",
 		"updated repository copy of site database to reflect changes",
 	})
 
