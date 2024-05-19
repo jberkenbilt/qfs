@@ -542,7 +542,8 @@ func (r *Repo) Push(config *PushConfig) error {
 		return err
 	}
 
-	changes := len(diffResult.Change)+len(diffResult.Add)+len(diffResult.Rm)+len(diffResult.MetaChange) > 0
+	changes := len(diffResult.Change) > 0 || len(diffResult.Add) > 0 ||
+		len(diffResult.Rm) > 0 || len(diffResult.MetaChange) > 0
 	if changes {
 		misc.Message("----- changes to push -----")
 		_ = diffResult.WriteDiff(os.Stdout, false)
