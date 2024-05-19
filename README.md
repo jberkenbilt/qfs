@@ -130,17 +130,11 @@ telling you what changed.
 
 # Known Issues
 
-* If you exclude a directory and include something below the directory, the directory itself will
-  not be included, so its permissions will not be tracked. This is not necessarily a problem. If we
-  fix it by adding the concept of a directory that is included without including its descendants,
-  remember the following, where "included" means directly included without implying inclusion of
-  descendants:
-  * `.` is always included
-  * `.qfs` is included by repoRules
-  * The ancestors of any explicitly included path should be included
-  * The ancestors of any path that was included by pattern or base should be included -- this one is
-    the tricky one since it is dynamic and therefore requires tracking what we've already seen and
-    also requires us to test inclusion bottom up or reverse lexical order
+* If you include a directory by pattern or base, otherwise excluded ancestor directories will not be
+  included. This usually isn't a problem, but it could cause an issue with `sync` if any pattern or
+  base includes are used. See comments in filter.go around fullPath. This is hard to resolve because
+  we don't know the list of paths in advance. It might be possible to deal with this by
+  post-processing the diff result used with sync.
 * It would be nice if pushing to the repository would remove anything on the repository that is not
   included by the repository filter. An initial attempt was made by adding the concept of a
   `destFilter` that would would be checked separately in diff.compare with the behavior that items

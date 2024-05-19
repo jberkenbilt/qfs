@@ -734,6 +734,8 @@ dir1
 dir2
 dir3
 dir4
+excluded/included
+*/always
 `)
 	writeFile(t, j("site1/.qfs/filters/site1"), start, 0o644, `
 :read:prune
@@ -742,6 +744,8 @@ dir1
 dir2
 # dir3 is only on site1
 dir3
+excluded/included
+*/always
 `)
 	// Create various files and directories for upcoming tests. Passing empty string
 	// as last argument writes the file's path as its contents so every file is
@@ -756,6 +760,14 @@ dir3
 	writeFile(t, j("site1/dir3/only-in-site1"), start+7000, 0o644, "")
 	writeFile(t, j("site1/junk/ignored"), start, 0o644, "")
 	writeFile(t, j("site1/dir/a.junk"), start, 0o644, "")
+	// excluded/included is included by base, so excluded gets included without descendants
+	writeFile(t, j("site1/excluded/included/here"), start, 0o644, "")
+	writeFile(t, j("site1/excluded/skipped"), start, 0o644, "")
+	// other/always/* is included by base. It would be nice if `other` got included
+	// without descendants, but it doesn't. See comments in filter.go around
+	// fullPath.
+	writeFile(t, j("site1/other/always/here"), start, 0o644, "")
+	writeFile(t, j("site1/other/skipped"), start, 0o644, "")
 	testutil.Check(t, os.Mkdir(j("site1/dir2"), 0o755))
 	testutil.Check(t, os.Symlink("../dir1/change-in-site1", j("site1/dir2/link-to-change")))
 	testutil.Check(t, os.Symlink("replace-with-file", j("site1/dir2/link-then-file")))
@@ -782,7 +794,9 @@ dir3
 		},
 		// This is lexically sorted, since diff output is sorted, based on the things
 		// created above.
-		`add .qfs/filters/prune
+		`mkdir .
+mkdir .qfs
+add .qfs/filters/prune
 add .qfs/filters/repo
 add .qfs/filters/site1
 mkdir dir1
@@ -805,6 +819,11 @@ add dir2/link-to-change
 add dir2/link-to-remove
 mkdir dir3
 add dir3/only-in-site1
+mkdir excluded
+mkdir excluded/included
+add excluded/included/here
+mkdir other/always
+add other/always/here
 prompt: Continue?
 `,
 		filepath.Base(os.Args[0])+": removing dir/a.junk\n",
@@ -818,6 +837,8 @@ prompt: Continue?
 		"----- changes to push -----",
 		// diff is written to stdout
 		"-----",
+		"storing .",
+		"storing .qfs",
 		"storing .qfs/filters/prune",
 		"storing .qfs/filters/repo",
 		"storing .qfs/filters/site1",
@@ -841,6 +862,11 @@ prompt: Continue?
 		"storing dir2/dir-to-remove",
 		"storing dir3",
 		"storing dir3/only-in-site1",
+		"storing excluded",
+		"storing excluded/included",
+		"storing excluded/included/here",
+		"storing other/always",
+		"storing other/always/here",
 		"uploading repository database",
 		"uploading site database",
 	})
@@ -904,7 +930,8 @@ prompt: Continue?
 				t.Errorf("%v", err)
 			}
 		},
-		`add .qfs/filters/prune
+		`mkdir .qfs
+add .qfs/filters/prune
 add .qfs/filters/repo
 add .qfs/filters/site1
 prompt: Continue?
@@ -930,7 +957,8 @@ prompt: Continue?
 				t.Errorf("%v", err)
 			}
 		},
-		`add .qfs/filters/prune
+		`mkdir .qfs
+add .qfs/filters/prune
 add .qfs/filters/repo
 add .qfs/filters/site1
 prompt: Continue?
@@ -969,7 +997,8 @@ dir4
 				t.Errorf("pull: %v", err)
 			}
 		},
-		`mkdir dir1
+		`mkdir .
+mkdir dir1
 add dir1/change-in-site1
 add dir1/file-then-dir
 add dir1/file-then-link
@@ -1221,6 +1250,8 @@ prompt: Continue?
 		splitFields,
 		[]string{"qfs", "scan", "repo:", "-top", j("site1")},
 		[]string{
+			"d .",
+			"d .qfs",
 			"d dir1",
 			"d dir1/file-then-dir",
 			"d dir2",
@@ -1229,6 +1260,9 @@ prompt: Continue?
 			"d dir2/new-directory",
 			"d dir3",
 			"d dir4",
+			"d excluded",
+			"d excluded/included",
+			"d other/always",
 			"f .qfs/db/repo",
 			"f .qfs/db/site1",
 			"f .qfs/db/site2",
@@ -1245,6 +1279,8 @@ prompt: Continue?
 			"f dir2/new-file",
 			"f dir3/only-in-site1",
 			"f dir4/only-site-2",
+			"f excluded/included/here",
+			"f other/always/here",
 			"l dir1/file-then-link",
 			"l dir1/looks-like-repo@l,1715443064543,0777",
 			"l dir2/dir-then-link",
@@ -1874,6 +1910,8 @@ prompt: Continue?
 :include:
 dir1
 dir2
+excluded/included
+*/always
 `)
 	testutil.ExpStdout(
 		t,

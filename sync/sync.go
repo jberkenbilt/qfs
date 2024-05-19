@@ -30,6 +30,12 @@ func New(srcDir, destDir string, options ...Options) (*Sync, error) {
 	for _, fn := range options {
 		fn(s)
 	}
+	for _, f := range s.filters {
+		if f.HasImplicitIncludes() {
+			// See README.md and filter.go -- search for fullPath
+			return nil, fmt.Errorf("sync doesn't work with filters that have pattern or base include rules")
+		}
+	}
 	return s, nil
 }
 

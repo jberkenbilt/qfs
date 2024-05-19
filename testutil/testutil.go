@@ -30,6 +30,7 @@ func Check(t *testing.T, err error) {
 }
 
 func checkLinesInternal(t *testing.T, sorted bool, filter func(string) string, cmd []string, expLines []string) {
+	t.Helper()
 	stdout, stderr := WithStdout(func() {
 		Check(t, qfs.Run(cmd))
 	})

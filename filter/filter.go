@@ -12,9 +12,10 @@ import (
 )
 
 type filterGroup struct {
-	path    map[string]struct{} // applies to full path
-	base    map[string]struct{} // applies to a single path element
-	pattern []*regexp.Regexp    // applies to last path element
+	fullPath map[string]struct{} // applies to full path; checked only for entire path
+	path     map[string]struct{} // applies to full path; checked at each level
+	base     map[string]struct{} // applies to a single path element
+	pattern  []*regexp.Regexp    // applies to last path element
 }
 
 type Group int
@@ -48,8 +49,9 @@ const (
 
 func newFilterGroup() *filterGroup {
 	return &filterGroup{
-		path: map[string]struct{}{},
-		base: map[string]struct{}{},
+		fullPath: map[string]struct{}{},
+		path:     map[string]struct{}{},
+		base:     map[string]struct{}{},
 	}
 }
 
@@ -83,6 +85,17 @@ func New() *Filter {
 
 func (f *Filter) AddPath(g Group, val string) {
 	f.groups[g].path[val] = struct{}{}
+	if g == Include {
+		// For any included path, include all ancestor directories as full paths only. We
+		// don't have any way to do something like this for base or pattern because we
+		// don't know in advance what the ancestor directories will be. That situation is
+		// documented as a known issue in README.md and exercised in the test suite.
+		cur := val
+		for cur != "." {
+			cur = filepath.Dir(cur)
+			f.groups[g].fullPath[cur] = struct{}{}
+		}
+	}
 }
 
 func (f *Filter) AddBase(g Group, val string) {
@@ -120,7 +133,19 @@ func (f *Filter) SetDefaultInclude(val bool) {
 	f.includeDot = &val
 }
 
-func (fg *filterGroup) match(path string, base string) bool {
+// HasImplicitIncludes indicates whether the filter has any pattern or base
+// include rules. If so, the filter can't be used safely with sync. This is
+// discussed in README.md and filter.go.
+func (f *Filter) HasImplicitIncludes() bool {
+	return len(f.groups[Include].base) > 0 || len(f.groups[Include].pattern) > 0
+}
+
+func (fg *filterGroup) match(path string, base string, checkFullPath bool) bool {
+	if checkFullPath {
+		if _, ok := fg.fullPath[path]; ok {
+			return true
+		}
+	}
 	if _, ok := fg.path[path]; ok {
 		return true
 	}
@@ -172,6 +197,8 @@ func IsIncluded(
 		// important for filters to be included across all sites.
 		if strings.HasPrefix(path, repofiles.Filters+"/") {
 			return true, RepoRule
+		} else if path == repofiles.Top {
+			return true, RepoRule
 		} else if strings.HasPrefix(path, repofiles.Top+"/") {
 			return false, RepoRule
 		}
@@ -188,7 +215,7 @@ func IsIncluded(
 	for { // each path level
 		base = filepath.Base(cur)
 		for _, f := range filters {
-			if f.groups[Prune].match(cur, base) {
+			if f.groups[Prune].match(cur, base, false) {
 				return false, Prune
 			}
 		}
@@ -213,13 +240,13 @@ func IsIncluded(
 	thisFilter:
 		for {
 			base = filepath.Base(cur)
-			if f.groups[Include].match(cur, base) {
+			if f.groups[Include].match(cur, base, cur == path) {
 				// We can stop testing this filter, but the file could still be explicitly
 				// excluded by a later filter.
 				includeMatched = true
 				break thisFilter
 			}
-			if f.groups[Exclude].match(cur, base) {
+			if f.groups[Exclude].match(cur, base, false) {
 				return false, Exclude
 			}
 			cur = filepath.Dir(cur)
