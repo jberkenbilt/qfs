@@ -145,6 +145,9 @@ func (p *parser) check() error {
 	case actPull:
 	case actPushDb:
 	}
+	if p.noOp {
+		p.cleanup = false
+	}
 	return nil
 }
 
