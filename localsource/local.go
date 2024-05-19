@@ -99,6 +99,12 @@ func (ls *LocalSource) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	return fi, nil
 }
 
-func (ls *LocalSource) Download(srcPath string, srcInfo *fileinfo.FileInfo, f io.WriterAt) error {
-	return nil
+func (ls *LocalSource) Download(srcPath string, _ *fileinfo.FileInfo, f *os.File) error {
+	r, err := ls.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	_, err = io.Copy(f, r)
+	return err
 }

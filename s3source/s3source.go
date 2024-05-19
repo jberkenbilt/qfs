@@ -16,6 +16,7 @@ import (
 	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -345,7 +346,7 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	return nil
 }
 
-func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f io.WriterAt) error {
+func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f *os.File) error {
 	key := s.KeyFromPath(repoPath, srcInfo)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,

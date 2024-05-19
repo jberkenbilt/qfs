@@ -50,7 +50,7 @@ type Source interface {
 	FileInfo(path string) (*FileInfo, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
-	Download(srcPath string, srcInfo *FileInfo, f io.WriterAt) error
+	Download(srcPath string, srcInfo *FileInfo, f *os.File) error
 }
 
 type Path struct {
@@ -81,7 +81,7 @@ func (p *Path) Remove() error {
 	return p.source.Remove(p.path)
 }
 
-func (p *Path) Download(srcInfo *FileInfo, f io.WriterAt) error {
+func (p *Path) Download(srcInfo *FileInfo, f *os.File) error {
 	return p.source.Download(p.path, srcInfo, f)
 }
 
