@@ -6,10 +6,44 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/diff"
 	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/misc"
+	"github.com/jberkenbilt/qfs/scan"
 	"io/fs"
 	"os"
 )
+
+type Options func(*Sync)
+
+type Sync struct {
+	srcDir  string
+	destDir string
+	filters []*filter.Filter
+	noOp    bool
+}
+
+func New(srcDir, destDir string, options ...Options) (*Sync, error) {
+	s := &Sync{
+		srcDir:  srcDir,
+		destDir: destDir,
+	}
+	for _, fn := range options {
+		fn(s)
+	}
+	return s, nil
+}
+
+func WithFilters(filters []*filter.Filter) Options {
+	return func(s *Sync) {
+		s.filters = filters
+	}
+}
+
+func WithNoOp(noOp bool) Options {
+	return func(s *Sync) {
+		s.noOp = noOp
+	}
+}
 
 func ApplyChanges(
 	src fileinfo.Source,
@@ -110,6 +144,38 @@ func ApplyChanges(
 		if destDb != nil {
 			destDb[m.Info.Path] = m.Info
 		}
+	}
+	return nil
+}
+
+func (s *Sync) Sync() error {
+	scanSrc, err := scan.New(
+		s.srcDir,
+		scan.WithFilters(s.filters),
+		scan.WithNoSpecial(true),
+	)
+	if err != nil {
+		return err
+	}
+	scanDest, err := scan.New(s.destDir)
+	if err != nil {
+		return err
+	}
+	dbSrc, err := scanSrc.Run()
+	if err != nil {
+		return err
+	}
+	dbDest, err := scanDest.Run()
+	if err != nil {
+		return err
+	}
+	d := diff.New(diff.WithNoOwnerships(true))
+	diffResult, err := d.Run(dbDest, dbSrc)
+	if err != nil {
+		return err
+	}
+	if s.noOp {
+		_ = diffResult.WriteDiff(os.Stdout, false)
 	}
 	return nil
 }

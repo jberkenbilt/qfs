@@ -235,6 +235,7 @@ qfs subcommand [options]
   filtering rules. Files are added, updated, or removed from dest so that dest contains only files
   from src that are included by the filters.
   * _filter options_
+  * `-n` -- report what would be done without doing it
 
 # Filters
 

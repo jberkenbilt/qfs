@@ -15,6 +15,7 @@ import (
 	"github.com/jberkenbilt/qfs/repo"
 	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
+	"github.com/jberkenbilt/qfs/sync"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +69,7 @@ const (
 	actPush
 	actPull
 	actPushDb
+	actSync
 )
 
 var argTables = func() map[actionKey]map[string]argHandler {
@@ -88,7 +90,7 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"version": argVersion,
 		},
 		actScan: {
-			"":        argScanPositional,
+			"":        argOneInput,
 			"long":    argLong,
 			"db":      argDb,
 			"cleanup": argCleanup,
@@ -96,7 +98,7 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"top":     argTop, // only with repo:...
 		},
 		actDiff: {
-			"":               argDiffPositional,
+			"":               argTwoInputs,
 			"non-file-times": argNonFileTimes,
 			"no-ownerships":  argNoOwnerships,
 			"checks":         argChecks,
@@ -119,8 +121,12 @@ var argTables = func() map[actionKey]map[string]argHandler {
 		actPushDb: {
 			"top": argTop,
 		},
+		actSync: {
+			"":  argTwoInputs,
+			"n": argNoOp,
+		},
 	}
-	for _, i := range []actionKey{actScan, actDiff} {
+	for _, i := range []actionKey{actScan, actDiff, actSync} {
 		for arg, fn := range filterArgs {
 			a[i][arg] = fn
 		}
@@ -144,6 +150,10 @@ func (p *parser) check() error {
 	case actPush:
 	case actPull:
 	case actPushDb:
+	case actSync:
+		if p.input2 == "" {
+			return errors.New("sync requires two inputs")
+		}
 	}
 	if p.noOp {
 		p.cleanup = false
@@ -209,6 +219,8 @@ func argSubcommand(p *parser, arg string) error {
 		p.action = actPull
 	case "push-db":
 		p.action = actPushDb
+	case "sync":
+		p.action = actSync
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -240,7 +252,7 @@ func argChecks(p *parser, _ string) error {
 	return nil
 }
 
-func argScanPositional(p *parser, arg string) error {
+func argOneInput(p *parser, arg string) error {
 	if p.input1 != "" {
 		return fmt.Errorf("at argument \"%s\": an input has already been specified", arg)
 	}
@@ -248,7 +260,7 @@ func argScanPositional(p *parser, arg string) error {
 	return nil
 }
 
-func argDiffPositional(p *parser, arg string) error {
+func argTwoInputs(p *parser, arg string) error {
 	if p.input2 != "" {
 		return fmt.Errorf("at argument \"%s\": inputs have already been specified", arg)
 	}
@@ -509,6 +521,19 @@ func (p *parser) doPushDb() error {
 	return r.PushDb()
 }
 
+func (p *parser) doSync() error {
+	s, err := sync.New(
+		p.input1,
+		p.input2,
+		sync.WithFilters(p.filters),
+		sync.WithNoOp(p.noOp),
+	)
+	if err != nil {
+		return err
+	}
+	return s.Sync()
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
@@ -546,6 +571,8 @@ func Run(args []string) error {
 		return p.doPull()
 	case actPushDb:
 		return p.doPushDb()
+	case actSync:
+		return p.doSync()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil

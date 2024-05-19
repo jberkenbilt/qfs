@@ -125,10 +125,10 @@ func WithNonFileTimes(nonFileTimes bool) func(*Diff) {
 	}
 }
 
-// RunFiles diffs the input sources.
-func (d *Diff) RunFiles(input1, input2 string) (*Result, error) {
+// RunFiles generates a diff that, when applied to oldSrc, makes it look like newSrc.
+func (d *Diff) RunFiles(oldSrc, newSrc string) (*Result, error) {
 	s1, err := scan.New(
-		input1,
+		oldSrc,
 		scan.WithFilters(d.filters),
 		scan.WithFilesOnly(d.filesOnly),
 		scan.WithNoSpecial(d.noSpecial),
@@ -138,7 +138,7 @@ func (d *Diff) RunFiles(input1, input2 string) (*Result, error) {
 		return nil, err
 	}
 	s2, err := scan.New(
-		input2,
+		newSrc,
 		scan.WithFilters(d.filters),
 		scan.WithFilesOnly(d.filesOnly),
 		scan.WithNoSpecial(d.noSpecial),
@@ -167,9 +167,11 @@ func workGet(work map[string]*oldNew, path string) *oldNew {
 	return entry
 }
 
-func (d *Diff) Run(files1, files2 database.Database) (*Result, error) {
+// Run generates a diff that would make oldDb look like newDb, which means that
+// typically oldDb is destination and newDb is the source.
+func (d *Diff) Run(oldDb, newDb database.Database) (*Result, error) {
 	work := map[string]*oldNew{}
-	err := files1.ForEach(func(f *fileinfo.FileInfo) error {
+	err := oldDb.ForEach(func(f *fileinfo.FileInfo) error {
 		workGet(work, f.Path).fOld = f
 		return nil
 	})
@@ -177,7 +179,7 @@ func (d *Diff) Run(files1, files2 database.Database) (*Result, error) {
 		// TEST: NOT COVERED
 		return nil, err
 	}
-	err = files2.ForEach(func(f *fileinfo.FileInfo) error {
+	err = newDb.ForEach(func(f *fileinfo.FileInfo) error {
 		workGet(work, f.Path).fNew = f
 		return nil
 	})
