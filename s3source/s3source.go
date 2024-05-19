@@ -414,7 +414,7 @@ func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
 	}
 	var requiresCopy bool
 	withUnlocked(func() {
-		requiresCopy, err = fileinfo.RequiresCopy(srcPath, destPath)
+		requiresCopy, err = fileinfo.RequiresCopy(srcInfo, destPath)
 	})
 	if err != nil {
 		return false, err

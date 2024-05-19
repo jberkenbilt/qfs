@@ -335,8 +335,10 @@ func TestS3Source(t *testing.T) {
 
 	// Exercise retrieval
 	srcPath := fileinfo.NewPath(src, "dir1/potato")
+	srcInfo, err := srcPath.FileInfo()
+	testutil.Check(t, err)
 	destPath := fileinfo.NewPath(localsource.New(tmp), "files/dir1/potato")
-	if x, err := fileinfo.RequiresCopy(srcPath, destPath); err != nil {
+	if x, err := fileinfo.RequiresCopy(srcInfo, destPath); err != nil {
 		t.Fatalf(err.Error())
 	} else if x {
 		t.Errorf("initially requires copy")
@@ -361,7 +363,7 @@ func TestS3Source(t *testing.T) {
 	if string(data) != "salad\n" {
 		t.Errorf("wrong body: %s", data)
 	}
-	if x, err := fileinfo.RequiresCopy(srcPath, destPath); err != nil {
+	if x, err := fileinfo.RequiresCopy(srcInfo, destPath); err != nil {
 		t.Fatalf(err.Error())
 	} else if x {
 		t.Errorf("initially requires copy")

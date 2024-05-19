@@ -45,7 +45,7 @@ type Source interface {
 	FileInfo(path string) (*FileInfo, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
-	Retrieve(srcPath string, localPath string) (bool, error)
+	Retrieve(repoPath string, localPath string) (bool, error)
 }
 
 type Path struct {
@@ -91,11 +91,7 @@ func (p *Path) Join(elem string) *Path {
 // cases, the operation to bring the files in sync can be done with the file
 // information alone and doesn't require actually reading the source. It is an
 // error to call this if the destination exists and is not a plain file.
-func RequiresCopy(src, dest *Path) (bool, error) {
-	srcInfo, err := src.FileInfo()
-	if err != nil {
-		return false, err
-	}
+func RequiresCopy(srcInfo *FileInfo, dest *Path) (bool, error) {
 	if srcInfo.FileType != TypeFile {
 		return false, nil
 	}

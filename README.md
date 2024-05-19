@@ -232,7 +232,8 @@ qfs subcommand [options]
   * `-replace` -- replace the local file with the retrieved version; only valid with a single file
   * One of `-out` or `-replace` must be given.
 * `sync src dest` -- synchronize the destination directory with the source directory subject to
-  filtering rules
+  filtering rules. Files are added, updated, or removed from dest so that dest contains only files
+  from src that are included by the filters.
   * _filter options_
 
 # Filters

@@ -889,8 +889,7 @@ func (r *Repo) loadRepoDb() error {
 		return err
 	}
 	srcPath := fileinfo.NewPath(src, repofiles.RepoDb())
-	var toLoad *fileinfo.Path
-	requiresCopy, err := fileinfo.RequiresCopy(srcPath, localPath)
+	srcInfo, err := srcPath.FileInfo()
 	if errors.Is(err, fs.ErrNotExist) {
 		r.repoDb = database.Database{}
 		r.downloadedRepoDb = false
@@ -899,6 +898,12 @@ func (r *Repo) loadRepoDb() error {
 		// TEST: NOT COVERED
 		return err
 	} else {
+		var toLoad *fileinfo.Path
+		requiresCopy, err := fileinfo.RequiresCopy(srcInfo, localPath)
+		if err != nil {
+			// TEST: NOT COVERED
+			return err
+		}
 		if !requiresCopy {
 			misc.Message("local copy of repository database is current")
 			toLoad = localPath
