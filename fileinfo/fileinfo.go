@@ -45,6 +45,7 @@ type Source interface {
 	FileInfo(path string) (*FileInfo, error)
 	Open(path string) (io.ReadCloser, error)
 	Remove(path string) error
+	Retrieve(srcPath string, localPath string) (bool, error)
 }
 
 type Path struct {

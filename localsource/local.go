@@ -98,3 +98,8 @@ func (ls *LocalSource) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	}
 	return fi, nil
 }
+
+func (ls *LocalSource) Retrieve(srcPath string, localPath string) (bool, error) {
+	// XXX
+	return false, nil
+}
