@@ -343,7 +343,7 @@ func TestS3Source(t *testing.T) {
 	} else if x {
 		t.Errorf("initially requires copy")
 	}
-	retrieved, err := src.Retrieve("dir1/potato", destPath.Path())
+	retrieved, err := fileinfo.Retrieve(fileinfo.NewPath(src, "dir1/potato"), destPath)
 	if err != nil {
 		t.Errorf(err.Error())
 	}
@@ -351,7 +351,7 @@ func TestS3Source(t *testing.T) {
 		t.Error("shouldn't have retrieved file")
 	}
 	testutil.Check(t, os.WriteFile(destPath.Path(), []byte("something new"), 0o666))
-	retrieved, err = src.Retrieve("dir1/potato", destPath.Path())
+	retrieved, err = fileinfo.Retrieve(fileinfo.NewPath(src, "dir1/potato"), destPath)
 	if err != nil {
 		t.Error(err.Error())
 	}

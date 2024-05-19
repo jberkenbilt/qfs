@@ -73,8 +73,8 @@ func ApplyChanges(
 	misc.DoConcurrently(
 		func(c chan *fileinfo.FileInfo, errorChan chan error) {
 			for info := range c {
-				path := fileinfo.NewPath(dest, info.Path).Path()
-				downloaded, err := src.Retrieve(info.Path, path)
+				destPath := fileinfo.NewPath(dest, info.Path)
+				downloaded, err := fileinfo.Retrieve(fileinfo.NewPath(src, info.Path), destPath)
 				if err != nil {
 					// TEST: NOT COVERED
 					errorChan <- fmt.Errorf("retrieve %s: %w", info.Path, err)

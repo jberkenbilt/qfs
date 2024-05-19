@@ -913,7 +913,7 @@ func (r *Repo) loadRepoDb() error {
 			misc.Message("downloading latest repository database")
 			downloaded = true
 			pending := r.localPath(repofiles.TempRepoDb())
-			_, err = src.Retrieve(repofiles.RepoDb(), pending.Path())
+			_, err = fileinfo.Retrieve(fileinfo.NewPath(src, repofiles.RepoDb()), pending)
 			if err != nil {
 				// TEST: NOT COVERED
 				return err

@@ -11,13 +11,11 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
-	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/repofiles"
 	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -47,7 +45,6 @@ type S3Source struct {
 	dbMutex   sync.Mutex
 	db        database.Database
 	extraKeys map[string]time.Time
-	recvMutex sync.Mutex // for local file system changes
 }
 
 func New(bucket, prefix string, options ...Options) (*S3Source, error) {
@@ -348,114 +345,14 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	return nil
 }
 
-// Retrieve retrieves a file from the repository. No action is performed
-// If localPath has the same size and modification time as indicated in the repo.
-// The return value indicates whether the file changed.
-func (s *S3Source) Retrieve(repoPath string, localPath string) (bool, error) {
-	// Lock a mutex for local file system operations. Unlock the mutex while interacting with S3.
-	s.recvMutex.Lock()
-	defer s.recvMutex.Unlock()
-	withUnlocked := func(fn func()) {
-		s.recvMutex.Unlock()
-		defer s.recvMutex.Lock()
-		fn()
-	}
-
-	srcPath := fileinfo.NewPath(s, repoPath)
-	destPath := fileinfo.NewPath(localsource.New(""), localPath)
-	srcInfo, err := srcPath.FileInfo()
-	if err != nil {
-		return false, err
-	}
-	if srcInfo.FileType == fileinfo.TypeLink {
-		target, err := os.Readlink(localPath)
-		if err == nil && target == srcInfo.Special {
-			return false, nil
-		}
-		err = os.MkdirAll(filepath.Dir(localPath), 0777)
-		if err != nil {
-			return false, err
-		}
-		err = os.RemoveAll(localPath)
-		if err != nil {
-			return false, err
-		}
-		err = os.Symlink(srcInfo.Special, localPath)
-		if err != nil {
-			return false, err
-		}
-		return true, nil
-	} else if srcInfo.FileType == fileinfo.TypeDirectory {
-		p := fileinfo.NewPath(localsource.New(""), localPath)
-		info, err := p.FileInfo()
-		if err != nil || info.FileType != fileinfo.TypeDirectory {
-			err = os.RemoveAll(localPath)
-			if err != nil {
-				return false, err
-			}
-		}
-		// Ignore directory times.
-		if info != nil && info.FileType == fileinfo.TypeDirectory && info.Permissions == srcInfo.Permissions {
-			// No action required
-			return false, nil
-		}
-		err = os.MkdirAll(localPath, 0777)
-		if err != nil {
-			return false, err
-		}
-		if err := os.Chmod(localPath, fs.FileMode(srcInfo.Permissions)); err != nil {
-			return false, fmt.Errorf("set mode for %s: %w", localPath, err)
-		}
-		return true, nil
-	} else if srcInfo.FileType != fileinfo.TypeFile {
-		// TEST: NOT COVERED. There is no way to represent this, and Store doesn't store
-		// specials.
-		return false, fmt.Errorf("downloading special files is not supported")
-	}
-	var requiresCopy bool
-	withUnlocked(func() {
-		requiresCopy, err = fileinfo.RequiresCopy(srcInfo, destPath)
-	})
-	if err != nil {
-		return false, err
-	}
-	if !requiresCopy {
-		return false, nil
-	}
-	err = os.MkdirAll(filepath.Dir(localPath), 0777)
-	if err != nil {
-		return false, err
-	}
-	err = os.Chmod(localPath, fs.FileMode(srcInfo.Permissions|0o600))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
-	}
-	f, err := os.Create(localPath)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = f.Close() }()
+func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f io.WriterAt) error {
 	key := s.KeyFromPath(repoPath, srcInfo)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
 	}
-	withUnlocked(func() {
-		_, err = s.downloader.Download(ctx, f, input)
-	})
-	if err != nil {
-		return false, err
-	}
-	if err := f.Close(); err != nil {
-		return false, err
-	}
-	if err := os.Chtimes(localPath, time.Time{}, srcInfo.ModTime); err != nil {
-		return false, fmt.Errorf("set times for %s: %w", localPath, err)
-	}
-	if err := os.Chmod(localPath, fs.FileMode(srcInfo.Permissions)); err != nil {
-		return false, fmt.Errorf("set mode for %s: %w", localPath, err)
-	}
-	return true, nil
+	_, err := s.downloader.Download(ctx, f, input)
+	return err
 }
 
 func (s *S3Source) Database(
