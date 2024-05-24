@@ -5,44 +5,6 @@ Last full review: 2024-05-06
 # XXX work in
 
 * document use of `pull -n` and `push` to revert the repository, analogous to `push-db` and `pull`
-* To get versions, do list-object-versions on path@ (including .@) and sort by descending s3
-  timestamp across differing keys including delete markers. If a delete marker and a non-deleted
-  version have the same timestamp, favor the new version. Ignore anything whose key doesn't match
-  after truncating everything after the last @. (Be sure to test with something with @ in the file
-  name.) Only one should actually exist, meaning the latest of all except the newest item should be
-  deleted. In other words, IsLatest is only allowed be true for a Version (rather than a
-  DeleteMarker; indicated by '*' below) for the newest item. Otherwise, the item should be deleted.
-
-```
-#!/usr/bin/env python3
-import json
-from operator import itemgetter
-
-with open('/tmp/a.json', 'r') as f:
-    data = json.loads(f.read())
-
-all = []
-
-for i in data['Versions']:
-    all.append([
-        [i['LastModified'], 1],
-        i['Key'],
-        i['VersionId'],
-        '*' if i['IsLatest'] else '',
-    ])
-for i in data['DeleteMarkers']:
-    all.append([
-        [i['LastModified'], 0],
-        i['Key'],
-        i['VersionId'],
-        '',
-    ])
-
-all.sort(key=itemgetter(0), reverse=True)
-for i in all:
-    print(i)
-```
-
 * TO DO
   * completion and help
   * Get tests to pass when run in a different time zone
@@ -54,7 +16,6 @@ for i in all:
       it.
     * If you pushed something by mistake, remove it from the repo filter, push again, and then run
       `init-repo -clean-repo`.
-  * list-versions
   * get
 * Remove remnants of `-local`, `-save-site` and `-site-file`
 
@@ -219,6 +180,10 @@ qfs subcommand [options]
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
 * `list-versions path` -- list all known versions of file in the repository at or below a specified
   path. For this to be useful, bucket versioning should be enabled.
+  * `-time ISO-8601-date` -- list as of the given ISO 8601 date/time
+  * `-timestamp epoch time` -- list as of the timestamp given as either second or millisecond epoch
+    time
+  * `-long` --show key and version
 * `get path` -- copy a file/directory from the repository
   * `-at-time` -- copy the version that existed at the specified timestamp
   * `-out location` -- write the output to the given location, which must not exist.

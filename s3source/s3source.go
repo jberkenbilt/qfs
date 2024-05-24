@@ -93,7 +93,7 @@ func (s *S3Source) FullPath(path string) string {
 	return fmt.Sprintf("s3://%s/%s@...", s.bucket, filepath.Join(s.prefix, path))
 }
 
-func (s *S3Source) keyToFileInfo(key string, size int64) *fileinfo.FileInfo {
+func (s *S3Source) KeyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 	key = misc.RemovePrefix(key, s.prefix)
 	m := pathRe.FindStringSubmatch(key)
 	if m == nil {
@@ -161,7 +161,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 			return nil, fmt.Errorf("get listing for %s: %w", s.FullPath(path), err)
 		}
 		for _, output := range listOutput.Contents {
-			newFi := s.keyToFileInfo(*output.Key, *output.Size)
+			newFi := s.KeyToFileInfo(*output.Key, *output.Size)
 			if newFi.Path != path {
 				// This is for the wrong path -- that most likely means there were extra @ signs
 				// in the name.
@@ -401,7 +401,7 @@ func (s *S3Source) dbHandleObject(
 	if *object.Key == filepath.Join(s.prefix, repofiles.Busy) {
 		return
 	}
-	fi := s.keyToFileInfo(*object.Key, *object.Size)
+	fi := s.KeyToFileInfo(*object.Key, *object.Size)
 	if fi == nil {
 		s.withDbLock(func() {
 			s.extraKeys[*object.Key] = *object.LastModified

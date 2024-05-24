@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const TimeFormat = "2006-01-02 15:04:05.000-07:00"
+
 type FileType rune
 
 // fsMutex is for local file system operations.

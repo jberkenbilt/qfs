@@ -489,7 +489,7 @@ func (db Database) Print(long bool) error {
 		if long {
 			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
 		}
-		fmt.Printf(" %s %s", f.ModTime.Format("2006-01-02 15:04:05.000Z07:00"), f.Path)
+		fmt.Printf(" %s %s", f.ModTime.Format(fileinfo.TimeFormat), f.Path)
 		if f.FileType == fileinfo.TypeLink {
 			fmt.Printf(" -> %s", f.Special)
 		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {

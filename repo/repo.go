@@ -25,8 +25,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const ScanPrefix = "repo:"
@@ -55,6 +57,36 @@ type PullConfig struct {
 }
 
 type InitMode int
+
+type ListVersionsConfig struct {
+	NotAfter time.Time
+	Long     bool
+}
+
+type versionData struct {
+	key          string
+	version      string
+	lastModified time.Time
+	isDelete     bool
+	info         *fileinfo.FileInfo
+}
+
+func cmpVersionData(a, b *versionData) int {
+	// Newer times come before older times
+	if c := b.lastModified.Compare(a.lastModified); c != 0 {
+		return c
+	}
+	// If the times match (they never should), favor non-deleted over deleted
+	if !a.isDelete && b.isDelete {
+		return -1
+	}
+	if a.isDelete && !b.isDelete {
+		return 1
+	}
+	// Fall back to the files' (rather than the objects') modification times, with
+	// newer files coming first.
+	return b.info.ModTime.Compare(a.info.ModTime)
+}
 
 const (
 	InitNormal InitMode = iota
@@ -967,4 +999,93 @@ func (r *Repo) Scan(input string, filters []*filter.Filter) (database.Database, 
 		database.WithRepoRules(false),
 		database.WithFilters(filters),
 	)
+}
+
+func (r *Repo) getVersions(path string, config *ListVersionsConfig) (map[string][]*versionData, error) {
+	src, err := s3source.New(
+		r.bucket,
+		r.prefix,
+		s3source.WithS3Client(r.s3Client),
+	)
+	if err != nil {
+		return nil, err
+	}
+	prefix := filepath.Join(r.prefix, path)
+	input := &s3.ListObjectVersionsInput{
+		Bucket: &r.bucket,
+		Prefix: &prefix,
+	}
+	paginator := s3.NewListObjectVersionsPaginator(r.s3Client, input)
+	files := map[string][]*versionData{}
+	handle := func(key string, size int64, lastModified time.Time, version string, isDelete bool) {
+		info := src.KeyToFileInfo(key, size)
+		if info == nil {
+			return
+		}
+		if !config.NotAfter.Equal(time.Time{}) {
+			// For deleted files, lastModified indicates when the deletion was recorded.
+			// Otherwise, use the file's modification time.
+			if isDelete && lastModified.After(config.NotAfter) {
+				return
+			}
+			if !isDelete && info.ModTime.After(config.NotAfter) {
+				return
+			}
+		}
+		files[info.Path] = append(files[info.Path], &versionData{
+			key:          key,
+			version:      version,
+			lastModified: lastModified,
+			isDelete:     isDelete,
+			info:         info,
+		})
+	}
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("error getting versions for s3://%s/%s: %w", r.bucket, prefix, err)
+		}
+		for _, x := range page.Versions {
+			handle(*x.Key, *x.Size, *x.LastModified, *x.VersionId, false)
+		}
+		for _, x := range page.DeleteMarkers {
+			handle(*x.Key, 0, *x.LastModified, *x.VersionId, true)
+		}
+	}
+	for _, data := range files {
+		slices.SortFunc(data, cmpVersionData)
+	}
+	return files, nil
+}
+
+func (r *Repo) ListVersions(path string, config *ListVersionsConfig) error {
+	files, err := r.getVersions(path, config)
+	if err != nil {
+		return err
+	}
+	fileNames := maps.Keys(files)
+	sort.Strings(fileNames)
+	for _, p := range fileNames {
+		data := files[p]
+		fmt.Println(p)
+		for i, x := range data {
+			if x.isDelete {
+				if i == 0 {
+					fmt.Printf("  %v deleted\n", x.lastModified.Format(fileinfo.TimeFormat))
+				}
+				continue
+			}
+			var extra string
+			if x.info.FileType == fileinfo.TypeLink {
+				extra = "-> " + x.info.Special
+			} else {
+				extra = fmt.Sprintf("%04o", x.info.Permissions)
+			}
+			fmt.Printf("  %v %c %v\n", x.info.ModTime.Format(fileinfo.TimeFormat), x.info.FileType, extra)
+			if config.Long {
+				fmt.Printf("    %v %v\n", x.key, x.version)
+			}
+		}
+	}
+	return nil
 }

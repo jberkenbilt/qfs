@@ -19,7 +19,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var S3Client *s3.Client // Overridden in test suite
@@ -47,6 +49,7 @@ type parser struct {
 	noOp          bool
 	localFilter   bool
 	initMode      repo.InitMode
+	timestamp     time.Time
 }
 
 // Our command-line syntax is complex and not well-suited to something like
@@ -70,6 +73,7 @@ const (
 	actPull
 	actPushDb
 	actSync
+	actListVersions
 )
 
 var argTables = func() map[actionKey]map[string]argHandler {
@@ -125,6 +129,13 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"":  argTwoInputs,
 			"n": argNoOp,
 		},
+		actListVersions: {
+			"":          argOneInput,
+			"top":       argTop,
+			"time":      argTime,
+			"timestamp": argTimestamp,
+			"long":      argLong,
+		},
 	}
 	for _, i := range []actionKey{actScan, actDiff, actSync} {
 		for arg, fn := range filterArgs {
@@ -153,6 +164,10 @@ func (p *parser) check() error {
 	case actSync:
 		if p.input2 == "" {
 			return errors.New("sync requires two inputs")
+		}
+	case actListVersions:
+		if p.input1 == "" {
+			return errors.New("list-versions requires a path")
 		}
 	}
 	if p.noOp {
@@ -205,6 +220,38 @@ func argMigrate(p *parser, _ string) error {
 	return nil
 }
 
+func argTime(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
+		return fmt.Errorf("%s requires an argument", arg)
+	}
+	date := p.args[p.arg]
+	p.arg++
+	t, err := time.Parse(time.RFC3339, date)
+	if err != nil {
+		return fmt.Errorf("error parsing %s as ISO-8601 date/time: %w", date, err)
+	}
+	p.timestamp = t
+	return nil
+}
+
+func argTimestamp(p *parser, arg string) error {
+	if p.arg >= len(p.args) {
+		return fmt.Errorf("%s requires an argument", arg)
+	}
+	timestamp := p.args[p.arg]
+	p.arg++
+	t, err := strconv.Atoi(timestamp)
+	if err != nil {
+		return fmt.Errorf("error parsing %s as epoch timestamp: %w", timestamp, err)
+	}
+	if len(timestamp) > 10 {
+		p.timestamp = time.UnixMilli(int64(t))
+	} else {
+		p.timestamp = time.Unix(int64(t), 0)
+	}
+	return nil
+}
+
 func argSubcommand(p *parser, arg string) error {
 	switch arg {
 	case "scan":
@@ -221,6 +268,8 @@ func argSubcommand(p *parser, arg string) error {
 		p.action = actPushDb
 	case "sync":
 		p.action = actSync
+	case "list-versions":
+		p.action = actListVersions
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -534,6 +583,20 @@ func (p *parser) doSync() error {
 	return s.Sync()
 }
 
+func (p *parser) doListVersions() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.ListVersions(p.input1, &repo.ListVersionsConfig{
+		NotAfter: p.timestamp,
+		Long:     p.long,
+	})
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("no arguments provided")
@@ -573,6 +636,8 @@ func Run(args []string) error {
 		return p.doPushDb()
 	case actSync:
 		return p.doSync()
+	case actListVersions:
+		return p.doListVersions()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil
