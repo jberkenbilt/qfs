@@ -12,6 +12,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/repo"
 	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
@@ -26,6 +27,9 @@ import (
 
 var S3Client *s3.Client // Overridden in test suite
 var s3Re = regexp.MustCompile(`^s3://([^/]+)(?:/(.*))?$`)
+var epochRe = regexp.MustCompile(`^\d+$`)
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+var dateTimeRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}(?:\.\d{3})?$`)
 
 type parser struct {
 	progName      string
@@ -74,6 +78,7 @@ const (
 	actPushDb
 	actSync
 	actListVersions
+	actGet
 )
 
 var argTables = func() map[actionKey]map[string]argHandler {
@@ -130,14 +135,18 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"n": argNoOp,
 		},
 		actListVersions: {
-			"":          argOneInput,
-			"top":       argTop,
-			"time":      argTime,
-			"timestamp": argTimestamp,
-			"long":      argLong,
+			"":      argOneInput,
+			"top":   argTop,
+			"as-of": argTimestamp,
+			"long":  argLong,
+		},
+		actGet: {
+			"":      argTwoInputs,
+			"top":   argTop,
+			"as-of": argTimestamp,
 		},
 	}
-	for _, i := range []actionKey{actScan, actDiff, actSync} {
+	for _, i := range []actionKey{actScan, actDiff, actSync, actListVersions, actGet} {
 		for arg, fn := range filterArgs {
 			a[i][arg] = fn
 		}
@@ -168,6 +177,10 @@ func (p *parser) check() error {
 	case actListVersions:
 		if p.input1 == "" {
 			return errors.New("list-versions requires a path")
+		}
+	case actGet:
+		if p.input2 == "" {
+			return errors.New("get requires a path and a save location")
 		}
 	}
 	if p.noOp {
@@ -220,34 +233,37 @@ func argMigrate(p *parser, _ string) error {
 	return nil
 }
 
-func argTime(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
-	date := p.args[p.arg]
-	p.arg++
-	t, err := time.Parse(time.RFC3339, date)
-	if err != nil {
-		return fmt.Errorf("error parsing %s as ISO-8601 date/time: %w", date, err)
-	}
-	p.timestamp = t
-	return nil
-}
-
 func argTimestamp(p *parser, arg string) error {
 	if p.arg >= len(p.args) {
 		return fmt.Errorf("%s requires an argument", arg)
 	}
 	timestamp := p.args[p.arg]
 	p.arg++
-	t, err := strconv.Atoi(timestamp)
-	if err != nil {
-		return fmt.Errorf("error parsing %s as epoch timestamp: %w", timestamp, err)
-	}
-	if len(timestamp) > 10 {
-		p.timestamp = time.UnixMilli(int64(t))
+	if epochRe.MatchString(timestamp) {
+		t, err := strconv.Atoi(timestamp)
+		if err != nil {
+			return fmt.Errorf("error parsing %s as epoch timestamp: %w", timestamp, err)
+		}
+		if len(timestamp) > 10 {
+			p.timestamp = time.UnixMilli(int64(t))
+		} else {
+			p.timestamp = time.Unix(int64(t), 0)
+		}
+	} else if dateRe.MatchString(timestamp) {
+		t, err := time.ParseInLocation(misc.DateFormat, timestamp, time.Local)
+		if err != nil {
+			return fmt.Errorf("error parsing %s as YYYY-MM-DD: %w", timestamp, err)
+		}
+		p.timestamp = t
+	} else if dateTimeRe.MatchString(timestamp) {
+		// Parse accepts optional milliseconds when omitted from the format.
+		t, err := time.ParseInLocation(misc.TimeFormatNoMs, timestamp, time.Local)
+		if err != nil {
+			return fmt.Errorf("error parsing %s as YYYY-MM-DD_hh:mm:ss[.sss]: %w", timestamp, err)
+		}
+		p.timestamp = t
 	} else {
-		p.timestamp = time.Unix(int64(t), 0)
+		return fmt.Errorf("timestamp must be epoch time (second or millisecond) or YYYY-MM-DD[_hh:mm:ss[.sss]]")
 	}
 	return nil
 }
@@ -270,6 +286,8 @@ func argSubcommand(p *parser, arg string) error {
 		p.action = actSync
 	case "list-versions":
 		p.action = actListVersions
+	case "get":
+		p.action = actGet
 	default:
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
@@ -592,8 +610,23 @@ func (p *parser) doListVersions() error {
 		return err
 	}
 	return r.ListVersions(p.input1, &repo.ListVersionsConfig{
-		NotAfter: p.timestamp,
-		Long:     p.long,
+		AsOf:    p.timestamp,
+		Long:    p.long,
+		Filters: p.filters,
+	})
+}
+
+func (p *parser) doGet() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.Get(p.input1, p.input2, &repo.GetConfig{
+		AsOf:    p.timestamp,
+		Filters: p.filters,
 	})
 }
 
@@ -638,6 +671,8 @@ func Run(args []string) error {
 		return p.doSync()
 	case actListVersions:
 		return p.doListVersions()
+	case actGet:
+		return p.doGet()
 	}
 	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
 	return nil

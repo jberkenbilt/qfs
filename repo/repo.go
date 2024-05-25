@@ -59,8 +59,14 @@ type PullConfig struct {
 type InitMode int
 
 type ListVersionsConfig struct {
-	NotAfter time.Time
-	Long     bool
+	AsOf    time.Time
+	Long    bool
+	Filters []*filter.Filter
+}
+
+type GetConfig struct {
+	AsOf    time.Time
+	Filters []*filter.Filter
 }
 
 type versionData struct {
@@ -1002,7 +1008,8 @@ func (r *Repo) Scan(input string, filters []*filter.Filter) (database.Database, 
 }
 
 func (r *Repo) getVersions(path string, config *ListVersionsConfig) (map[string][]*versionData, error) {
-	src, err := s3source.New(
+	var err error
+	r.src, err = s3source.New(
 		r.bucket,
 		r.prefix,
 		s3source.WithS3Client(r.s3Client),
@@ -1018,19 +1025,18 @@ func (r *Repo) getVersions(path string, config *ListVersionsConfig) (map[string]
 	paginator := s3.NewListObjectVersionsPaginator(r.s3Client, input)
 	files := map[string][]*versionData{}
 	handle := func(key string, size int64, lastModified time.Time, version string, isDelete bool) {
-		info := src.KeyToFileInfo(key, size)
+		info := r.src.KeyToFileInfo(key, size)
 		if info == nil {
 			return
 		}
-		if !config.NotAfter.Equal(time.Time{}) {
-			// For deleted files, lastModified indicates when the deletion was recorded.
-			// Otherwise, use the file's modification time.
-			if isDelete && lastModified.After(config.NotAfter) {
-				return
-			}
-			if !isDelete && info.ModTime.After(config.NotAfter) {
-				return
-			}
+		if included, _ := filter.IsIncluded(info.Path, false, config.Filters...); !included {
+			return
+		}
+		// Compare the "as of" time with the S3 modification time so the time reflects
+		// the state of the repository at that time. This provides more useful results
+		// with deleted files or files whose modification times have been moved backward.
+		if !config.AsOf.Equal(time.Time{}) && lastModified.After(config.AsOf) {
+			return
 		}
 		files[info.Path] = append(files[info.Path], &versionData{
 			key:          key,
@@ -1071,7 +1077,7 @@ func (r *Repo) ListVersions(path string, config *ListVersionsConfig) error {
 		for i, x := range data {
 			if x.isDelete {
 				if i == 0 {
-					fmt.Printf("  %v deleted\n", x.lastModified.Format(fileinfo.TimeFormat))
+					fmt.Printf("  %v deleted\n", misc.FormatTime(x.lastModified))
 				}
 				continue
 			}
@@ -1079,13 +1085,78 @@ func (r *Repo) ListVersions(path string, config *ListVersionsConfig) error {
 			if x.info.FileType == fileinfo.TypeLink {
 				extra = "-> " + x.info.Special
 			} else {
-				extra = fmt.Sprintf("%04o", x.info.Permissions)
+				extra = fmt.Sprintf("%04o %d", x.info.Permissions, x.info.Size)
 			}
-			fmt.Printf("  %v %c %v\n", x.info.ModTime.Format(fileinfo.TimeFormat), x.info.FileType, extra)
+			fmt.Printf(
+				"  %v %c %v %v\n",
+				misc.FormatTime(x.lastModified),
+				x.info.FileType,
+				misc.FormatTime(x.info.ModTime),
+				extra,
+			)
 			if config.Long {
 				fmt.Printf("    %v %v\n", x.key, x.version)
 			}
 		}
 	}
+	return nil
+}
+
+func (r *Repo) Get(path string, saveLocation string, config *GetConfig) error {
+	dest := localsource.New(saveLocation)
+	_, err := dest.FileInfo(path)
+	var pathError *os.PathError
+	if !(errors.As(err, &pathError) && os.IsNotExist(pathError)) {
+		return fmt.Errorf("%s must not exist", filepath.Join(saveLocation, path))
+	}
+	files, err := r.getVersions(
+		path,
+		&ListVersionsConfig{
+			AsOf:    config.AsOf,
+			Filters: config.Filters,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	c := make(chan *versionData, numWorkers)
+	var allErrors []error
+	fileNames := maps.Keys(files)
+	sort.Strings(fileNames)
+	go func() {
+		for _, p := range fileNames {
+			data := files[p]
+			if len(data) == 0 || data[0].isDelete {
+				continue
+			}
+			v := data[0]
+			fmt.Println(p)
+			c <- v
+		}
+		close(c)
+	}()
+	misc.DoConcurrently(
+		func(c chan *versionData, errorChan chan error) {
+			for v := range c {
+				p := v.info.Path
+				_, err := fileinfo.RetrieveFromInfo(
+					v.info,
+					fileinfo.NewPath(dest, p),
+					func(f *os.File) error {
+						return r.src.DownloadVersion(v.key, &v.version, f)
+					},
+				)
+				if err != nil {
+					errorChan <- err
+					return
+				}
+			}
+		},
+		func(e error) {
+			allErrors = append(allErrors, e)
+		},
+		c,
+		1, ///numWorkers,
+	)
 	return nil
 }

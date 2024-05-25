@@ -346,6 +346,20 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	return nil
 }
 
+func (s *S3Source) DownloadVersion(
+	key string,
+	versionId *string,
+	f *os.File,
+) error {
+	input := &s3.GetObjectInput{
+		Bucket:    &s.bucket,
+		Key:       &key,
+		VersionId: versionId,
+	}
+	_, err := s.downloader.Download(ctx, f, input)
+	return err
+}
+
 func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f *os.File) error {
 	key := s.KeyFromPath(repoPath, srcInfo)
 	input := &s3.GetObjectInput{

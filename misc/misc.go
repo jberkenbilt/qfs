@@ -6,7 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
+
+const DateFormat = "2006-01-02"
+const TimeFormatNoMs = "2006-01-02_15:04:05" // for parsing
+const TimeFormat = "2006-01-02_15:04:05.000"
 
 var progName = filepath.Base(os.Args[0])
 
@@ -84,4 +89,8 @@ func RemovePrefix(key string, prefix string) string {
 		panic("key doesn't start with prefix")
 	}
 	return key[len(prefix):]
+}
+
+func FormatTime(t time.Time) string {
+	return t.Local().Format(TimeFormat)
 }

@@ -38,6 +38,11 @@ func TestWithStdout(t *testing.T) {
 }
 
 func TestScanStdout(t *testing.T) {
+	oldLocal := time.Local
+	defer func() {
+		time.Local = oldLocal
+	}()
+	time.Local, _ = time.LoadLocation("EST5EDT")
 	var err error
 	data, _ := testutil.WithStdout(func() {
 		err = qfs.Run([]string{
@@ -112,6 +117,11 @@ func TestDiffError(t *testing.T) {
 }
 
 func TestScanDir(t *testing.T) {
+	oldLocal := time.Local
+	defer func() {
+		time.Local = oldLocal
+	}()
+	time.Local, _ = time.LoadLocation("EST5EDT")
 	tmp := t.TempDir()
 	j := func(path string) string { return filepath.Join(tmp, path) }
 	err := gztar.Extract("testdata/files.tar.gz", tmp)
@@ -154,7 +164,7 @@ func TestScanDir(t *testing.T) {
 		}
 	}
 	if !(slices.Equal(filesOut, lines) && sawX && sawLink) {
-		t.Errorf("%v\n%v", filesOut, lines)
+		t.Errorf("%s\n%s", filesOut, lines)
 		t.Errorf("got wrong stdout: %v %v %s", sawX, sawLink, lines)
 	}
 	filesDb := "testdata/files.qfs"

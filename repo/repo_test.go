@@ -145,6 +145,16 @@ func setUpTestBucket() {
 	if err != nil {
 		panic(err.Error())
 	}
+	i2 := &s3.PutBucketVersioningInput{
+		Bucket: aws.String(TestBucket),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	}
+	_, err = s3Client.PutBucketVersioning(ctx, i2)
+	if err != nil {
+		panic(err.Error())
+	}
 }
 
 func writeFile(
@@ -808,6 +818,8 @@ excluded/included
 		j("site1/dir1/looks-like-repo@l,1715443064543,0777"),
 	))
 
+	// Make sure some time passes for versioning.
+	time.Sleep(10 * time.Millisecond)
 	testutil.ExpStdout(
 		t,
 		func() {
@@ -1167,6 +1179,90 @@ add dir2/link-to-remove
 	})
 	checkSync(t, j("site2"), j("sync"), j("site2/.qfs/filters/site2"))
 
+	// Make a second copy. We will use this later to test get.
+	testutil.Check(t, os.MkdirAll(j("sync2"), 0777))
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"sync",
+				"-filter",
+				j("site2/.qfs/filters/site2"),
+				j("site2"),
+				j("sync2"),
+			})
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{
+		"copied dir1/change-in-site1",
+		"copied dir1/file-then-dir",
+		"copied dir1/file-then-link",
+		"copied dir1/file-to-change-and-chmod",
+		"copied dir1/file-to-chmod",
+		"copied dir1/file-to-remove",
+		"copied dir1/looks-like-repo@l,1715443064543,0777",
+		"copied dir1/ro-file-to-change",
+		"copied dir2/link-then-directory",
+		"copied dir2/link-then-file",
+		"copied dir2/link-to-change",
+		"copied dir2/link-to-remove",
+	})
+	checkSync(t, j("site2"), j("sync2"), j("site2/.qfs/filters/site2"))
+	lvOut1, _ := testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				".qfs/db/repo",
+			}))
+		},
+	)
+	timeRe := regexp.MustCompile(`[.\n]*(\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}\.\d{3}) f`)
+	m := timeRe.FindSubmatch(lvOut1)
+	if m == nil {
+		t.Fatalf("can't find time in %s", lvOut1)
+	}
+	pushTime1 := string(m[1])
+
+	// Save the output of a listing at this time.
+	lvOut1, _ = testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				"dir1",
+			}))
+		},
+	)
+	lvOutLong1, _ := testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				"dir1",
+				"-long",
+			}))
+		},
+	)
+	if !strings.Contains(string(lvOut1), "dir1/file-to-change") {
+		t.Errorf("didn't find expected contents: %s", lvOut1)
+	}
+	if !strings.Contains(string(lvOutLong1), "dir1/file-to-change") {
+		t.Errorf("didn't find expected contents: %s", lvOut1)
+	}
+	if string(lvOut1) == string(lvOutLong1) {
+		t.Errorf("regular and long outputs are the same")
+	}
+
 	// In the next stage of testing, exercise that changes are carried across.
 	// Advance the timestamps so changes are detected in case the test suite runs
 	// faster than qfs or s3 timestamp granularity. Then make changes relative to the
@@ -1345,8 +1441,8 @@ prompt: Continue?
 	// Exercise repo scan
 	splitFields := func(s string) string {
 		fields := strings.Split(s, " ")
-		if len(fields) >= 7 {
-			return fields[1] + " " + fields[6]
+		if len(fields) >= 6 {
+			return fields[1] + " " + fields[5]
 		}
 		return s
 	}
@@ -1907,6 +2003,66 @@ prompt: Continue?
 		"uploading site database",
 	})
 
+	// Check versions again
+	lvOut2, _ := testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				".qfs/db/repo",
+			}))
+		},
+	)
+	m = timeRe.FindSubmatch(lvOut2)
+	if m == nil {
+		t.Fatalf("can't find time in %s", lvOut1)
+	}
+	pushTime2 := string(m[1])
+	if pushTime1 == pushTime2 {
+		t.Errorf("push times match: %s", pushTime1)
+	}
+	if slices.Equal(lvOut1, lvOut2) {
+		t.Errorf("listings are equal at different times: %s\n%s", lvOut1, lvOut2)
+	}
+
+	// We know the straight listings were different. Do another listing as of the
+	// previous time. This should match the earlier listing.
+	lvOut2, _ = testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				"dir1",
+				"-as-of",
+				pushTime1,
+			}))
+		},
+	)
+	lvOutLong2, _ := testutil.WithStdout(
+		func() {
+			testutil.Check(t, qfs.Run([]string{
+				"qfs",
+				"list-versions",
+				"-top",
+				j("site2"),
+				"dir1",
+				"-long",
+				"-as-of",
+				pushTime1,
+			}))
+		},
+	)
+	if !slices.Equal(lvOut1, lvOut2) {
+		t.Errorf("not equal: %s\n%s", lvOut1, lvOut2)
+	}
+	if !slices.Equal(lvOutLong1, lvOutLong2) {
+		t.Errorf("not equal: %s\n%s", lvOut1, lvOut2)
+	}
+
 	// Site1 is current
 	testutil.ExpStdout(
 		t,
@@ -2006,6 +2162,92 @@ prompt: Continue?
 		"chmod 0750 dir2/dir-to-chmod",
 	})
 	checkSync(t, j("site2"), j("sync"), j("site2/.qfs/filters/site2"))
+
+	// Get files from the repository. It should match what we synced.
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"get",
+				"-top",
+				j("site2"),
+				"dir1",
+				j("get1"),
+			})
+		},
+		`dir1
+dir1/change-in-site1
+dir1/file-then-dir
+dir1/file-then-link
+dir1/file-to-change-and-chmod
+dir1/file-to-chmod
+dir1/looks-like-repo@l,1715443064543,0777
+dir1/ro-file-to-change
+`,
+		"",
+	)
+	// This should match sync.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{
+				"qfs",
+				"diff",
+				j("sync/dir1"),
+				j("get1/dir1"),
+			})
+			if err != nil {
+				t.Errorf(err.Error())
+			}
+		},
+		"",
+		"",
+	)
+	// Get from an earlier time
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"get",
+				"-top",
+				j("site2"),
+				"dir1",
+				j("get2"),
+				"-as-of",
+				pushTime1,
+			})
+		},
+		`dir1
+dir1/change-in-site1
+dir1/file-then-dir
+dir1/file-then-link
+dir1/file-to-change-and-chmod
+dir1/file-to-chmod
+dir1/file-to-remove
+dir1/looks-like-repo@l,1715443064543,0777
+dir1/ro-file-to-change
+`,
+		"",
+	)
+	// This should match sync2.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{
+				"qfs",
+				"diff",
+				j("sync2/dir1"),
+				j("get2/dir1"),
+			})
+			if err != nil {
+				t.Errorf(err.Error())
+			}
+		},
+		"",
+		"",
+	)
 
 	// Back in sync
 	testutil.ExpStdout(

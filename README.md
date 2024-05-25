@@ -4,10 +4,11 @@ Last full review: 2024-05-06
 
 # XXX work in
 
+* All times are shown in local time using yyyy-mm-dd_hh:mm:ss.sss format.
 * document use of `pull -n` and `push` to revert the repository, analogous to `push-db` and `pull`
 * TO DO
   * completion and help
-  * Get tests to pass when run in a different time zone
+  * In CI, run tests in different time zones
   * Document how to remove things. Removing something from a filter causes it to be untracked, not
     to disappear. So
     * If you remove a tracked directory and push/pull, it disappears
@@ -16,7 +17,6 @@ Last full review: 2024-05-06
       it.
     * If you pushed something by mistake, remove it from the repo filter, push again, and then run
       `init-repo -clean-repo`.
-  * get
 * Remove remnants of `-local`, `-save-site` and `-site-file`
 
 ----------
@@ -180,15 +180,17 @@ qfs subcommand [options]
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
 * `list-versions path` -- list all known versions of file in the repository at or below a specified
   path. For this to be useful, bucket versioning should be enabled.
-  * `-time ISO-8601-date` -- list as of the given ISO 8601 date/time
-  * `-timestamp epoch time` -- list as of the timestamp given as either second or millisecond epoch
-    time
+  * _filter options_
+  * `-not-after timestamp` -- list versions no later than the given time. The timestamp may be
+    specified as either an epoch time with second or millisecond granularity or a string of the form
+    `yyyy-mm-dd` or `yyyy-mm-dd_hh:mm:ss`. Epoch times are always interpreted as UTC. The other
+    format is intepreted as local time. Note that S3 version timestamp granularity is one second.
   * `-long` --show key and version
-* `get path` -- copy a file/directory from the repository
-  * `-at-time` -- copy the version that existed at the specified timestamp
-  * `-out location` -- write the output to the given location, which must not exist.
-  * `-replace` -- replace the local file with the retrieved version; only valid with a single file
-  * One of `-out` or `-replace` must be given.
+* `get path save-location` -- copy a file/directory from the repository and save relative to the
+  specified location; `save-location/path` must not exist.
+  * _filter options_
+  * `-as-of timestamp` -- get the file as it existed in the repository at the given time. The
+    timestamp has the same format as `-not-after` for `list-versions`.
 * `sync src dest` -- synchronize the destination directory with the source directory subject to
   filtering rules. Files are added, updated, or removed from dest so that dest contains only files
   from src that are included by the filters.

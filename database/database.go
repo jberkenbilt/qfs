@@ -10,6 +10,7 @@ import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
+	"github.com/jberkenbilt/qfs/misc"
 	"golang.org/x/exp/maps"
 	"io"
 	"os"
@@ -489,7 +490,7 @@ func (db Database) Print(long bool) error {
 		if long {
 			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
 		}
-		fmt.Printf(" %s %s", f.ModTime.Format(fileinfo.TimeFormat), f.Path)
+		fmt.Printf(" %s %s", misc.FormatTime(f.ModTime), f.Path)
 		if f.FileType == fileinfo.TypeLink {
 			fmt.Printf(" -> %s", f.Special)
 		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {

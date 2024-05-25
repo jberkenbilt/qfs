@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-const TimeFormat = "2006-01-02 15:04:05.000-07:00"
-
 type FileType rune
 
 // fsMutex is for local file system operations.
@@ -124,10 +122,9 @@ func RequiresCopy(srcInfo *FileInfo, dest *Path) (bool, error) {
 	return true, nil
 }
 
-// Retrieve retrieves the source path and writes to the local path. No action is
-// performed If localPath has the same size and modification time as indicated in
-// the source. The return value indicates whether the file changed.
-func Retrieve(srcPath, destPath *Path) (bool, error) {
+// RetrieveFromInfo does the work of retrieve while parameterizing the operations
+// of obtaining source file info and downloading.
+func RetrieveFromInfo(srcInfo *FileInfo, destPath *Path, download func(*os.File) error) (bool, error) {
 	// Lock a mutex for local file system operations. Unlock the mutex while interacting with the source.
 	fsMutex.Lock()
 	defer fsMutex.Unlock()
@@ -138,10 +135,6 @@ func Retrieve(srcPath, destPath *Path) (bool, error) {
 	}
 
 	localPath := destPath.Path()
-	srcInfo, err := srcPath.FileInfo()
-	if err != nil {
-		return false, err
-	}
 	if srcInfo.FileType == TypeLink {
 		target, err := os.Readlink(localPath)
 		if err == nil && target == srcInfo.Special {
@@ -187,6 +180,7 @@ func Retrieve(srcPath, destPath *Path) (bool, error) {
 		return false, fmt.Errorf("downloading special files is not supported")
 	}
 	var requiresCopy bool
+	var err error
 	withUnlocked(func() {
 		requiresCopy, err = RequiresCopy(srcInfo, destPath)
 	})
@@ -210,7 +204,7 @@ func Retrieve(srcPath, destPath *Path) (bool, error) {
 	}
 	defer func() { _ = f.Close() }()
 	withUnlocked(func() {
-		err = srcPath.Download(srcInfo, f)
+		err = download(f)
 	})
 	if err != nil {
 		return false, err
@@ -225,4 +219,19 @@ func Retrieve(srcPath, destPath *Path) (bool, error) {
 		return false, fmt.Errorf("set mode for %s: %w", localPath, err)
 	}
 	return true, nil
+}
+
+// Retrieve retrieves the source path and writes to the local path. No action is
+// performed If localPath has the same size and modification time as indicated in
+// the source. The return value indicates whether the file changed.
+func Retrieve(srcPath, destPath *Path) (bool, error) {
+	// Lock a mutex for local file system operations. Unlock the mutex while interacting with the source.
+	srcInfo, err := srcPath.FileInfo()
+	if err != nil {
+		return false, err
+	}
+	return RetrieveFromInfo(srcInfo, destPath, func(f *os.File) error {
+		return srcPath.Download(srcInfo, f)
+
+	})
 }
