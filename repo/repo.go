@@ -1160,3 +1160,22 @@ func (r *Repo) Get(path string, saveLocation string, config *GetConfig) error {
 	)
 	return nil
 }
+
+func (r *Repo) PushTimes() error {
+	repoDb := repofiles.RepoDb()
+	files, err := r.getVersions(repoDb, &ListVersionsConfig{})
+	if err != nil {
+		return err
+	}
+	data := files[repoDb]
+	if data == nil {
+		return fmt.Errorf("no information available about %s", repoDb)
+	}
+	for _, x := range data {
+		if x.isDelete {
+			continue
+		}
+		fmt.Printf("%v\n", misc.FormatTime(x.lastModified))
+	}
+	return nil
+}

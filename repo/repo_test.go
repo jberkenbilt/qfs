@@ -1229,6 +1229,23 @@ add dir2/link-to-remove
 	}
 	pushTime1 := string(m[1])
 
+	// Check also with push-times.
+	ptOut, _ := testutil.WithStdout(func() {
+		testutil.Check(t, qfs.Run([]string{
+			"qfs",
+			"push-times",
+			"-top",
+			j("site1"),
+		}))
+	})
+	ptLines := strings.Split(string(ptOut), "\n")
+	if len(ptLines) == 0 {
+		t.Fatalf("didn't get output from push-times")
+	}
+	if ptLines[0] != pushTime1 {
+		t.Errorf("got wrong first push time: %s", ptLines[0])
+	}
+
 	// Save the output of a listing at this time.
 	lvOut1, _ = testutil.WithStdout(
 		func() {
@@ -2204,6 +2221,25 @@ dir1/ro-file-to-change
 		"",
 		"",
 	)
+	// Get doesn't allow writing to a path that exists.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{
+				"qfs",
+				"get",
+				"-top",
+				j("site2"),
+				"dir1",
+				j("get1"),
+			})
+			if err == nil || !strings.Contains(err.Error(), "/get1/dir1 must not exist") {
+				t.Errorf(err.Error())
+			}
+		},
+		"",
+		"",
+	)
 	// Get from an earlier time
 	testutil.ExpStdout(
 		t,
@@ -2246,6 +2282,49 @@ dir1/ro-file-to-change
 			}
 		},
 		"",
+		"",
+	)
+	// Get with a filter. It should match what we synced except the filtered files.
+	// Use site1 to read the repo data. It's the same, so it doesn't matter.
+	testutil.ExpStdout(
+		t,
+		func() {
+			_ = qfs.Run([]string{
+				"qfs",
+				"get",
+				"-top",
+				j("site1"),
+				"dir1",
+				j("get3"),
+				"--exclude",
+				"*/change-in-site1",
+			})
+		},
+		`dir1
+dir1/file-then-dir
+dir1/file-then-link
+dir1/file-to-change-and-chmod
+dir1/file-to-chmod
+dir1/looks-like-repo@l,1715443064543,0777
+dir1/ro-file-to-change
+`,
+		"",
+	)
+	// This should match sync except the excluded file.
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.Run([]string{
+				"qfs",
+				"diff",
+				j("sync/dir1"),
+				j("get3/dir1"),
+			})
+			if err != nil {
+				t.Errorf(err.Error())
+			}
+		},
+		"rm change-in-site1\n",
 		"",
 	)
 

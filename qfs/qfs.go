@@ -77,6 +77,7 @@ const (
 	actPull
 	actPushDb
 	actSync
+	actPushTimes
 	actListVersions
 	actGet
 )
@@ -134,6 +135,9 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"":  argTwoInputs,
 			"n": argNoOp,
 		},
+		actPushTimes: {
+			"top": argTop,
+		},
 		actListVersions: {
 			"":      argOneInput,
 			"top":   argTop,
@@ -174,6 +178,7 @@ func (p *parser) check() error {
 		if p.input2 == "" {
 			return errors.New("sync requires two inputs")
 		}
+	case actPushTimes:
 	case actListVersions:
 		if p.input1 == "" {
 			return errors.New("list-versions requires a path")
@@ -284,6 +289,8 @@ func argSubcommand(p *parser, arg string) error {
 		p.action = actPushDb
 	case "sync":
 		p.action = actSync
+	case "push-times":
+		p.action = actPushTimes
 	case "list-versions":
 		p.action = actListVersions
 	case "get":
@@ -601,6 +608,17 @@ func (p *parser) doSync() error {
 	return s.Sync()
 }
 
+func (p *parser) doPushTimes() error {
+	r, err := repo.New(
+		repo.WithLocalTop(p.top),
+		repo.WithS3Client(S3Client),
+	)
+	if err != nil {
+		return err
+	}
+	return r.PushTimes()
+}
+
 func (p *parser) doListVersions() error {
 	r, err := repo.New(
 		repo.WithLocalTop(p.top),
@@ -669,6 +687,8 @@ func Run(args []string) error {
 		return p.doPushDb()
 	case actSync:
 		return p.doSync()
+	case actPushTimes:
+		return p.doPushTimes()
 	case actListVersions:
 		return p.doListVersions()
 	case actGet:

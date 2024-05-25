@@ -178,6 +178,7 @@ qfs subcommand [options]
   * `-local-filter` -- use the local filter; useful for pulling after a filter change
 * `push-db` -- regenerate local db and push to repository
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
+* `push-times` -- list the times at which pushes were made; useful for `list-versions` and `get`
 * `list-versions path` -- list all known versions of file in the repository at or below a specified
   path. For this to be useful, bucket versioning should be enabled.
   * _filter options_
