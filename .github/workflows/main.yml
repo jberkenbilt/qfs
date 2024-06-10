@@ -1,0 +1,22 @@
+name: qfs build
+on:
+  push:
+    branches:
+      - work
+  pull_request:
+    branches:
+      - work
+env:
+  AWS_REGION: "us-east-1"
+jobs:
+  Build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      - name: Test
+        run: ./test_all
