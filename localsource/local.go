@@ -64,7 +64,7 @@ func (ls *LocalSource) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	if ok && st != nil {
 		fi.Uid = int(st.Uid)
 		fi.Gid = int(st.Gid)
-		fi.Dev = st.Dev
+		fi.Dev = uint64(st.Dev) // the type of st.Dev varies by OS, so always cast
 		major = uint32(st.Rdev >> 8 & 0xfff)
 		minor = uint32(st.Rdev&0xff | (st.Rdev >> 12 & 0xfff00))
 	}
@@ -85,6 +85,7 @@ func (ls *LocalSource) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	case modeType&os.ModeNamedPipe != 0:
 		fi.FileType = fileinfo.TypePipe
 	case modeType&os.ModeSymlink != 0:
+		fi.Permissions = 0o777 // override permissions since it is platform-dependent
 		fi.FileType = fileinfo.TypeLink
 		target, err := os.Readlink(fullPath)
 		if err != nil {
