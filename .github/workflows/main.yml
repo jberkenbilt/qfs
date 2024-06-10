@@ -10,7 +10,12 @@ env:
   AWS_REGION: "us-east-1"
 jobs:
   Build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        platform: [ubuntu-latest, macos-latest]
+    runs-on: $${ matrix.platform }}
     steps:
       - uses: actions/checkout@v3
       - name: Setup Go
