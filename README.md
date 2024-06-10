@@ -2,12 +2,6 @@
 
 Last full review: 2024-06-10
 
-* TO DO
-  * help
-  * In CI, run tests in different time zones
-
-----------
-
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
 the local file system. The state includes the output of _lstat_ on the directory and all its
 contents. `qfs` includes the following capabilities:
