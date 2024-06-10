@@ -21,6 +21,7 @@ const (
 	password  = "qfs-test-pass"
 	accessKey = "qfs-demo-access-key"
 	secretKey = "qfs-demo-secret-key"
+	testPort  = 19091
 )
 
 type portInfo struct {
@@ -35,16 +36,30 @@ type portInfo struct {
 }
 
 type S3Test struct {
-	name     string
-	port     int
-	endpoint string
-	env      string
-	s3Client *s3.Client
+	name      string
+	useDocker bool
+	serverCmd *exec.Cmd
+	port      int
+	endpoint  string
+	env       string
+	s3Client  *s3.Client
 }
 
 func New(name string) (*S3Test, error) {
+	useDocker := false
+	_, haveDockerErr := exec.LookPath("docker")
+	if haveDockerErr == nil {
+		useDocker = true
+	} else {
+		_, haveMcErr := exec.LookPath("mc")
+		_, haveMinioErr := exec.LookPath("minio")
+		if !(haveMcErr == nil && haveMinioErr == nil) {
+			return nil, errors.New("neither docker nor minio/mc are available")
+		}
+	}
 	return &S3Test{
-		name: name,
+		name:      name,
+		useDocker: useDocker,
 	}, nil
 }
 
@@ -67,10 +82,26 @@ func unusedPort() int {
 	return port
 }
 
-// Running tests whether the test container is running. If so, the port is
-// returned. If there are no errors but the image is not found, the port is
-// returned as 0.
+// Running tests whether the test server is running. If so, the port is returned.
+// If there are no errors but the server is not found, the port is returned as 0.
 func (s *S3Test) Running() (int, error) {
+	if s.useDocker {
+		return s.dockerRunning()
+	}
+	return s.serverRunning()
+}
+
+func (s *S3Test) serverRunning() (int, error) {
+	cmd := exec.Command("mc", "admin", "info", "qfsTest")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return 0, nil
+	}
+	return testPort, nil
+}
+
+func (s *S3Test) dockerRunning() (int, error) {
 	cmd := exec.Command("docker", "inspect", s.name)
 	stdOut, err := cmd.StdoutPipe()
 	if err != nil {
@@ -110,29 +141,19 @@ func (s *S3Test) Running() (int, error) {
 	return port, nil
 }
 
-// Start starts the test container if not already running and returns an
+// Start starts the test server if not already running and returns an
 // indicator of whether it started it.
 func (s *S3Test) Start() (bool, error) {
-	port, err := s.Running()
+	var port int
+	var started bool
+	var err error
+	if s.useDocker {
+		port, started, err = s.dockerStart()
+	} else {
+		port, started, err = s.serverStart()
+	}
 	if err != nil {
 		return false, err
-	}
-	started := false
-	if port == 0 {
-		port = unusedPort()
-		err = runCmd(
-			"docker", "run", "-d", "--rm",
-			"-p", fmt.Sprintf("%d:9000", port),
-			"-e", "MINIO_ROOT_USER="+user,
-			"-e", "MINIO_ROOT_PASSWORD="+password,
-			"-v", s.name+"-vol:/data",
-			"--name", s.name, "minio/minio",
-			"server", "/data",
-		)
-		if err != nil {
-			return false, err
-		}
-		started = true
 	}
 	s.port = port
 	s.endpoint = fmt.Sprintf("http://localhost:%d", port)
@@ -165,10 +186,65 @@ export AWS_DEFAULT_REGION=us-east-1
 	)
 
 	return started, nil
+
+}
+func (s *S3Test) dockerStart() (int, bool, error) {
+	port, err := s.Running()
+	if err != nil {
+		return 0, false, err
+	}
+	started := false
+	if port == 0 {
+		port = unusedPort()
+		err = runCmd(
+			"docker", "run", "-d", "--rm",
+			"-p", fmt.Sprintf("%d:9000", port),
+			"-e", "MINIO_ROOT_USER="+user,
+			"-e", "MINIO_ROOT_PASSWORD="+password,
+			"-v", s.name+"-vol:/data",
+			"--name", s.name, "minio/minio",
+			"server", "/data",
+		)
+		if err != nil {
+			return 0, false, err
+		}
+		started = true
+	}
+	return port, started, nil
 }
 
-// Stop stops the container.
+func (s *S3Test) serverStart() (int, bool, error) {
+	port, err := s.Running()
+	if err != nil {
+		return 0, false, err
+	}
+	started := false
+	if port == 0 {
+		cmd := exec.Command(
+			"env",
+			"MINIO_ROOT_USER="+user,
+			"MINIO_ROOT_PASSWORD="+password,
+			"minio", "server", "--address", fmt.Sprintf(":%d", testPort), "/tmp/z", // XXX
+		)
+		err = cmd.Start()
+		if err != nil {
+			return 0, false, err
+		}
+		s.serverCmd = cmd
+		started = true
+	}
+	return testPort, started, nil
+}
+
+// Stop stops the server.
 func (s *S3Test) Stop() error {
+	if s.useDocker {
+		return s.dockerStop()
+	}
+	return s.serverStop()
+}
+
+func (s *S3Test) dockerStop() error {
 	var allErrors []error
 	if err := runCmd("docker", "rm", "-f", s.name); err != nil {
 		allErrors = append(allErrors, fmt.Errorf("remove container: %w", err))
@@ -179,7 +255,23 @@ func (s *S3Test) Stop() error {
 	return errors.Join(allErrors...)
 }
 
+func (s *S3Test) serverStop() error {
+	if s.serverCmd == nil {
+		return nil
+	}
+	_ = s.serverCmd.Process.Kill()
+	_ = s.serverCmd.Wait()
+	return nil
+}
+
 func (s *S3Test) Init() error {
+	if s.useDocker {
+		return s.dockerInit()
+	}
+	return s.serverInit()
+}
+
+func (s *S3Test) dockerInit() error {
 	tries := 0
 	for {
 		err := runCmd(
@@ -214,6 +306,45 @@ func (s *S3Test) Init() error {
 		"svcacct",
 		"add",
 		"qfs",
+		user,
+		"--access-key",
+		accessKey,
+		"--secret-key",
+		secretKey,
+	)
+	// Sometimes this exits abnormally but still succeeds in creating the key.
+	return nil
+}
+
+func (s *S3Test) serverInit() error {
+	tries := 0
+	for {
+		err := runCmd(
+			"mc",
+			"alias",
+			"set",
+			"qfsTest",
+			fmt.Sprintf("http://localhost:%d", testPort),
+			user,
+			password,
+		)
+		if err != nil {
+			if tries >= 20 {
+				return fmt.Errorf("set alias: %w", err)
+			}
+			tries++
+			time.Sleep(500 * time.Millisecond)
+		} else {
+			break
+		}
+	}
+	_ = runCmd(
+		"mc",
+		"admin",
+		"user",
+		"svcacct",
+		"add",
+		"qfsTest",
 		user,
 		"--access-key",
 		accessKey,

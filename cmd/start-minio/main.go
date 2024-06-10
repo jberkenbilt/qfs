@@ -28,6 +28,6 @@ func run(containerName string) error {
 
 func main() {
 	if err := run("qfs-test-minio"); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%s: %v", filepath.Base(os.Args[0]), err)
+		_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", filepath.Base(os.Args[0]), err)
 	}
 }

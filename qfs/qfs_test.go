@@ -201,7 +201,7 @@ mkdir x/one/two
 add x/one/two/b~
 `)
 	if !(sawDot && sawOtherMtime && slices.Equal(lines, diffOut)) {
-		t.Errorf("diff output: %v %s", sawDot, lines)
+		t.Errorf("diff output: %v %v %s", sawDot, sawOtherMtime, lines)
 	}
 }
 
