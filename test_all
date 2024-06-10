@@ -1,6 +1,13 @@
 #!/bin/bash
 set -eo pipefail
 cd $(dirname $0)
+
+# For CI on mac
+if [[ "$1" == "--install-minio" ]]; then
+    shift
+    brew install minio/stable/minio minio/stable/mc
+fi
+
 rm -rf coverage
 mkdir coverage
 failures=0
