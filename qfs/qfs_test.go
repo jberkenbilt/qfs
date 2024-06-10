@@ -523,7 +523,7 @@ func TestCLI(t *testing.T) {
 func TestHelpVersion(t *testing.T) {
 	cases := map[string]string{
 		"--version": "qfs version ",
-		"--help":    "Usage: qfs",
+		"--help":    "qfs subcommand [options]",
 	}
 	for arg, text := range cases {
 		t.Run(arg, func(t *testing.T) {

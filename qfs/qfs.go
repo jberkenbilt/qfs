@@ -17,9 +17,11 @@ import (
 	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
 	"github.com/jberkenbilt/qfs/sync"
+	"golang.org/x/exp/maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -64,7 +66,10 @@ type parser struct {
 
 const Version = "0.0"
 
-type argHandler func(*parser, string) error
+type argHandler struct {
+	fn   func(*parser, string) error
+	help string
+}
 
 type actionKey int
 
@@ -82,72 +87,79 @@ const (
 	actGet
 )
 
+func arg(fn func(*parser, string) error, help string) argHandler {
+	return argHandler{
+		fn:   fn,
+		help: help,
+	}
+}
+
 var argTables = func() map[actionKey]map[string]argHandler {
 	var filterArgs = map[string]argHandler{
-		"filter":       argFilter,
-		"filter-prune": argFilter,
-		"include":      argDynamicFilter,
-		"exclude":      argDynamicFilter,
-		"prune":        argDynamicFilter,
-		"junk":         argDynamicFilter,
-		"f":            argFilesOnly,
-		"no-special":   argNoSpecial,
+		"filter":       arg(argFilter, "filter file"),
+		"filter-prune": arg(argFilter, "filter file -- read prune/junk only"),
+		"include":      arg(argDynamicFilter, "include directive for dynamic filter"),
+		"exclude":      arg(argDynamicFilter, "exclude directive for dynamic filter"),
+		"prune":        arg(argDynamicFilter, "prune directive for dynamic filter"),
+		"junk":         arg(argDynamicFilter, "junk directive for dynamic filter"),
+		"f":            arg(argFilesOnly, "files and symbolic links only"),
+		"no-special":   arg(argNoSpecial, "omit pipes, sockets, and devices"),
 	}
 	a := map[actionKey]map[string]argHandler{
 		actNone: {
-			"":        argSubcommand,
-			"help":    argHelp,
-			"version": argVersion,
+			"":        arg(argSubcommand, "subcommand"),
+			"version": arg(argVersion, "show version and exit"),
+			// help is added in init to avoid circular initialization reference
 		},
 		actScan: {
-			"":        argOneInput,
-			"long":    argLong,
-			"db":      argDb,
-			"cleanup": argCleanup,
-			"xdev":    argXDev,
-			"top":     argTop, // only with repo:...
+			"":        arg(argOneInput, "scan-input"),
+			"long":    arg(argLong, "show ownerships"),
+			"db":      arg(argDb, "write to specified database file"),
+			"cleanup": arg(argCleanup, "remove junk files"),
+			"xdev":    arg(argXDev, "don't cross device boundaries"),
+			"top":     arg(argTop, "with repo: or repo:site, specific top-level directory"),
 		},
 		actDiff: {
-			"":               argTwoInputs,
-			"non-file-times": argNonFileTimes,
-			"no-ownerships":  argNoOwnerships,
-			"checks":         argChecks,
+			"":               arg(argTwoInputs, "old-scan-input new-scan-input"),
+			"non-file-times": arg(argNonFileTimes, "show modification time changes in non-files"),
+			"no-ownerships":  arg(argNoOwnerships, "don't show ownership changes"),
+			"checks":         arg(argChecks, "include information about \"old\" version for checking"),
 		},
 		actInitRepo: {
-			"top":        argTop,
-			"clean-repo": argCleanRepo,
-			"migrate":    argMigrate,
+			"top":        arg(argTop, "local repository top-level directory"),
+			"clean-repo": arg(argCleanRepo, "remove objects not included by filters"),
+			"migrate":    arg(argMigrate, "migrate from aws s3 sync"),
 		},
 		actPush: {
-			"top":     argTop,
-			"cleanup": argCleanup,
-			"n":       argNoOp,
+			"top":     arg(argTop, "local repository top-level directory"),
+			"cleanup": arg(argCleanup, "remove junk files while scanning"),
+			"n":       arg(argNoOp, "don't modify the repository"),
 		},
 		actPull: {
-			"top":          argTop,
-			"n":            argNoOp,
-			"local-filter": argLocalFilter,
+			"top":          arg(argTop, "local repository top-level directory"),
+			"n":            arg(argNoOp, "don't modify the local site"),
+			"local-filter": arg(argLocalFilter, "use the local copy of the site filter"),
 		},
 		actPushDb: {
-			"top": argTop,
+			"top": arg(argTop, "local repository top-level directory"),
 		},
 		actSync: {
-			"":  argTwoInputs,
-			"n": argNoOp,
+			"":  arg(argTwoInputs, "source-path dest-path"),
+			"n": arg(argNoOp, "show changes without modifying destination"),
 		},
 		actPushTimes: {
-			"top": argTop,
+			"top": arg(argTop, "local repository top-level directory"),
 		},
 		actListVersions: {
-			"":      argOneInput,
-			"top":   argTop,
-			"as-of": argTimestamp,
-			"long":  argLong,
+			"":      arg(argOneInput, "path within repository"),
+			"top":   arg(argTop, "local repository top-level directory"),
+			"as-of": arg(argTimestamp, "ignore anything newer than specified timestamp"),
+			"long":  arg(argLong, "include S3 version identifiers"),
 		},
 		actGet: {
-			"":      argTwoInputs,
-			"top":   argTop,
-			"as-of": argTimestamp,
+			"":      arg(argTwoInputs, "repository-path local-path"),
+			"top":   arg(argTop, "local repository top-level directory"),
+			"as-of": arg(argTimestamp, "ignore anything newer than specified timestamp"),
 		},
 	}
 	for _, i := range []actionKey{actScan, actDiff, actSync, actListVersions, actGet} {
@@ -157,6 +169,74 @@ var argTables = func() map[actionKey]map[string]argHandler {
 	}
 	return a
 }()
+
+func init() {
+	// We have to plug argHelp in here to avoid a circular initialization reference.
+	argTables[actNone]["help"] = arg(argHelp, "show help and exit")
+}
+
+type subcommandHandler struct {
+	action actionKey
+	help   string
+}
+
+func subcommand(action actionKey, help string) subcommandHandler {
+	return subcommandHandler{
+		action: action,
+		help:   help,
+	}
+}
+
+var subcommands = map[string]subcommandHandler{
+	"scan": subcommand(actScan, `
+Scan a directory, database, repository, or location in S3, applying all
+specified filters. scan-input may be one of
+
+* directory - a local directory
+* db - path to local qfs database
+* repo - the repository indicated by .qfs/repo
+* repo:$site - the repository copy of the database for site $site
+
+If -db is given, the result is written to the specified database.
+Otherwise, output is written to standard output.
+`),
+	"diff": subcommand(actDiff, `
+Compare two scan inputs, applying all specified filters.
+`),
+	"init-repo": subcommand(actInitRepo, `
+Initialize a repository.
+`),
+	"push": subcommand(actPush, `
+Push changes from the local site to the repository.
+`),
+	"pull": subcommand(actPull, `
+Pull changes from the repository to the local site.
+`),
+	"push-db": subcommand(actPushDb, `
+Regenerate the local site database and write it to the repository,
+overriding the repository's record of the local site's contents. This can
+be useful after restoring a site to replace outdated information in the
+repository.
+`),
+	"sync": subcommand(actSync, `
+Synchronize a destination directory with the contents of a source directory
+subject to the given filters. Similar in spirit to a local rsync using qfs
+filters.
+`),
+	"push-times": subcommand(actPushTimes, `
+List the timestamps of all known pushes.
+`),
+	"list-versions": subcommand(actListVersions, `
+List all the versions in the repository of all the files at or below a
+specified location.
+`),
+	"get": subcommand(actGet, `
+
+Retrieve files from the repository; useful for ad-hoc retrieval of files
+that are not included by the filter or recovering files that were changed
+locally and haven't been pushed.
+`),
+}
 
 func (p *parser) check() error {
 	switch p.action {
@@ -196,13 +276,47 @@ func (p *parser) check() error {
 
 func argHelp(p *parser, _ string) error {
 	fmt.Printf(`
-Usage: %s
+Usage:
+%s top-level-option
+OR
+%[1]s subcommand [options]
 
-XXX -- generate usage and also shell completion
-
+Top-level options:
 `,
 		p.progName,
 	)
+	keys := maps.Keys(argTables[actNone])
+	slices.Sort(keys)
+	for _, a := range keys {
+		if a == "" {
+			continue
+		}
+		fmt.Printf("  --%s: %s\n", a, argTables[actNone][a].help)
+	}
+	fmt.Printf("\nSubcommands:\n")
+	for s, sData := range subcommands {
+		args, ok := argTables[sData.action]
+		if !ok {
+			panic("no args for " + s)
+		}
+		pos, ok := args[""]
+		if ok {
+			fmt.Printf("\n%s %s {%s} [options]\n", p.progName, s, pos.help)
+		} else {
+			fmt.Printf("\n%s %s [options]\n", p.progName, s)
+		}
+		fmt.Println(sData.help)
+		keys = maps.Keys(args)
+		slices.Sort(keys)
+		fmt.Printf("%s options:\n", s)
+		for _, a := range keys {
+			if a == "" {
+				continue
+			}
+			fmt.Printf("  --%s: %s\n", a, args[a].help)
+		}
+	}
+
 	os.Exit(0)
 	return nil
 }
@@ -274,28 +388,9 @@ func argTimestamp(p *parser, arg string) error {
 }
 
 func argSubcommand(p *parser, arg string) error {
-	switch arg {
-	case "scan":
-		p.action = actScan
-	case "diff":
-		p.action = actDiff
-	case "init-repo":
-		p.action = actInitRepo
-	case "push":
-		p.action = actPush
-	case "pull":
-		p.action = actPull
-	case "push-db":
-		p.action = actPushDb
-	case "sync":
-		p.action = actSync
-	case "push-times":
-		p.action = actPushTimes
-	case "list-versions":
-		p.action = actListVersions
-	case "get":
-		p.action = actGet
-	default:
+	if action, ok := subcommands[arg]; ok {
+		p.action = action.action
+	} else {
 		return fmt.Errorf("unknown subcommand \"%s\"", arg)
 	}
 	return nil
@@ -455,9 +550,9 @@ func (p *parser) handleArg() error {
 		return fmt.Errorf("unknown option \"%s\"", arg)
 	}
 	if opt == "" {
-		return handler(p, arg)
+		return handler.fn(p, arg)
 	}
-	return handler(p, opt)
+	return handler.fn(p, opt)
 }
 
 func (p *parser) doScan() error {
