@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"time"
@@ -39,6 +40,7 @@ type S3Test struct {
 	name      string
 	useDocker bool
 	serverCmd *exec.Cmd
+	serverDir string
 	port      int
 	endpoint  string
 	env       string
@@ -220,11 +222,20 @@ func (s *S3Test) serverStart() (int, bool, error) {
 	}
 	started := false
 	if port == 0 {
+		serverDir, err := os.MkdirTemp("", s.name)
+		if err != nil {
+			return 0, false, err
+		}
+		s.serverDir = serverDir
 		cmd := exec.Command(
 			"env",
 			"MINIO_ROOT_USER="+user,
 			"MINIO_ROOT_PASSWORD="+password,
-			"minio", "server", "--address", fmt.Sprintf(":%d", testPort), "/tmp/z", // XXX
+			"minio",
+			"server",
+			"--address",
+			fmt.Sprintf(":%d", testPort),
+			serverDir,
 		)
 		err = cmd.Start()
 		if err != nil {
@@ -256,6 +267,9 @@ func (s *S3Test) dockerStop() error {
 }
 
 func (s *S3Test) serverStop() error {
+	if s.serverDir != "" {
+		_ = os.RemoveAll(s.serverDir)
+	}
 	if s.serverCmd == nil {
 		return nil
 	}
