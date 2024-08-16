@@ -77,7 +77,7 @@ func TestTraverse(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 	if len(allErrors) > 0 {
-		t.Errorf(errors.Join(allErrors...).Error())
+		t.Error(errors.Join(allErrors...).Error())
 	}
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)

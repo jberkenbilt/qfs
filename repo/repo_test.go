@@ -348,13 +348,13 @@ func TestS3Source(t *testing.T) {
 	testutil.Check(t, err)
 	destPath := fileinfo.NewPath(localsource.New(tmp), "files/dir1/potato")
 	if x, err := fileinfo.RequiresCopy(srcInfo, destPath); err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	} else if x {
 		t.Errorf("initially requires copy")
 	}
 	retrieved, err := fileinfo.Retrieve(fileinfo.NewPath(src, "dir1/potato"), destPath)
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Error(err.Error())
 	}
 	if retrieved {
 		t.Error("shouldn't have retrieved file")
@@ -373,7 +373,7 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("wrong body: %s", data)
 	}
 	if x, err := fileinfo.RequiresCopy(srcInfo, destPath); err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	} else if x {
 		t.Errorf("initially requires copy")
 	}
@@ -506,7 +506,7 @@ func TestRepo_IsInitialized(t *testing.T) {
 		repo.WithS3Client(s3Client),
 	)
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	}
 	err = r.Init(repo.InitCleanRepo)
 	var nsb *types.NoSuchBucket
@@ -654,7 +654,7 @@ func checkSync(t *testing.T, srcDir, destDir, filter string) {
 		func() {
 			err := qfs.Run([]string{"qfs", "diff", j("src-db"), j("dest-db")})
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 			}
 		},
 		"add z\n",
@@ -2213,7 +2213,7 @@ dir1/ro-file-to-change
 				j("get1/dir1"),
 			})
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 			}
 		},
 		"",
@@ -2232,7 +2232,7 @@ dir1/ro-file-to-change
 				j("get1"),
 			})
 			if err == nil || !strings.Contains(err.Error(), "/get1/dir1 must not exist") {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 			}
 		},
 		"",
@@ -2276,7 +2276,7 @@ dir1/ro-file-to-change
 				j("get2/dir1"),
 			})
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 			}
 		},
 		"",
@@ -2319,7 +2319,7 @@ dir1/ro-file-to-change
 				j("get3/dir1"),
 			})
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 			}
 		},
 		"rm change-in-site1\n",

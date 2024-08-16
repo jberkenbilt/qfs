@@ -52,7 +52,7 @@ func TestScanStdout(t *testing.T) {
 		})
 	})
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Error(err.Error())
 	}
 	if !slices.Equal(data, allTypesOut) {
 		t.Errorf("got wrong output: %s", data)
@@ -68,7 +68,7 @@ func TestScanStdout(t *testing.T) {
 		})
 	})
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Error(err.Error())
 	}
 	if !slices.Equal(data, allTypesOutLong) {
 		t.Errorf("got wrong output: %s", data)

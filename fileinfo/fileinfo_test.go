@@ -40,7 +40,7 @@ func TestRequiresCopy(t *testing.T) {
 	testutil.Check(t, err)
 	x, err = fileinfo.RequiresCopy(localInfo, fileinfo.NewPath(local, "two"))
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Error(err.Error())
 	} else if x {
 		t.Error("required with source as directory")
 	}
