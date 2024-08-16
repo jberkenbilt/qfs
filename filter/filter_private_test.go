@@ -3,7 +3,7 @@ package filter
 import (
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/localsource"
-	"golang.org/x/exp/maps"
+	"github.com/jberkenbilt/qfs/misc"
 	"regexp"
 	"slices"
 	"sort"
@@ -39,8 +39,7 @@ func checkFile(
 		return re.String()
 	}
 	compareMap := func(what string, actual map[string]struct{}, exp []string) {
-		actKeys := maps.Keys(actual)
-		sort.Strings(actKeys)
+		actKeys := misc.SortedKeys(actual)
 		sort.Strings(exp)
 		if !slices.Equal(actKeys, exp) {
 			t.Errorf("%s: got %#v, wanted %#v", what, actKeys, exp)

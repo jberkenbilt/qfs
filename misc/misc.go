@@ -2,8 +2,10 @@ package misc
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,4 +95,13 @@ func RemovePrefix(key string, prefix string) string {
 
 func FormatTime(t time.Time) string {
 	return t.Local().Format(TimeFormat)
+}
+
+func SortedKeys[T any](m map[string]T) []string {
+	var keys []string
+	for k := range maps.Keys(m) {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

@@ -5,10 +5,9 @@ import (
 	"github.com/jberkenbilt/qfs/database"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/scan"
-	"golang.org/x/exp/maps"
 	"os"
-	"sort"
 	"strconv"
 )
 
@@ -187,8 +186,7 @@ func (d *Diff) Run(oldDb, newDb database.Database) (*Result, error) {
 		// TEST: NOT COVERED
 		return nil, err
 	}
-	paths := maps.Keys(work)
-	sort.Strings(paths)
+	paths := misc.SortedKeys(work)
 	r := &Result{}
 	for _, path := range paths {
 		d.compare(r, path, work[path])

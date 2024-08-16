@@ -17,11 +17,9 @@ import (
 	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
 	"github.com/jberkenbilt/qfs/sync"
-	"golang.org/x/exp/maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -285,8 +283,7 @@ Top-level options:
 `,
 		p.progName,
 	)
-	keys := maps.Keys(argTables[actNone])
-	slices.Sort(keys)
+	keys := misc.SortedKeys(argTables[actNone])
 	for _, a := range keys {
 		if a == "" {
 			continue
@@ -306,8 +303,7 @@ Top-level options:
 			fmt.Printf("\n%s %s [options]\n", p.progName, s)
 		}
 		fmt.Println(sData.help)
-		keys = maps.Keys(args)
-		slices.Sort(keys)
+		keys = misc.SortedKeys(args)
 		fmt.Printf("%s options:\n", s)
 		for _, a := range keys {
 			if a == "" {

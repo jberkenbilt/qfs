@@ -1,6 +1,6 @@
 module github.com/jberkenbilt/qfs
 
-go 1.22
+go 1.23
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.26.1
@@ -8,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.11
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.16.15
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.53.1
-	golang.org/x/exp v0.0.0-20240409090435-93d18d7e34b8
 )
 
 require (

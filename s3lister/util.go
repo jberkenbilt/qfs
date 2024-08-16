@@ -116,7 +116,7 @@ func stringMidpoint(s1, s2 string) string {
 	return midpoint
 }
 
-// escapeUnicode formats a string with non-ASCII unicode escaped.
+// escapeUnicode formats a string with non-ASCII Unicode escaped.
 func escapeUnicode(s string) string {
 	r := fmt.Sprintf("%+q", s)
 	return r[1 : len(r)-1]

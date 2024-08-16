@@ -4,12 +4,11 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"errors"
-	"golang.org/x/exp/maps"
+	"github.com/jberkenbilt/qfs/misc"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -86,8 +85,7 @@ func Extract(filename string, dest string) error {
 			}
 		}
 	}
-	dirs := maps.Keys(dirTimes)
-	sort.Strings(dirs)
+	dirs := misc.SortedKeys(dirTimes)
 	slices.Reverse(dirs)
 	for _, dir := range dirs {
 		if err := os.Chmod(dir, dirModes[dir]); err != nil {

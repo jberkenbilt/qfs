@@ -11,12 +11,10 @@ import (
 	"github.com/jberkenbilt/qfs/filter"
 	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
-	"golang.org/x/exp/maps"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -474,8 +472,7 @@ func WriteDb(filename string, files Database, format DbFormat) error {
 type Database map[string]*fileinfo.FileInfo
 
 func (db Database) ForEach(fn func(*fileinfo.FileInfo) error) error {
-	keys := maps.Keys(db)
-	sort.Strings(keys)
+	keys := misc.SortedKeys(db)
 	for _, k := range keys {
 		if err := fn(db[k]); err != nil {
 			return err

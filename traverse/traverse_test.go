@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/traverse"
-	"golang.org/x/exp/maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -83,8 +83,7 @@ func TestTraverse(t *testing.T) {
 		t.Errorf("got messages: %#v", messages)
 	}
 	all := files.Database()
-	keys := maps.Keys(all)
-	sort.Strings(keys)
+	keys := misc.SortedKeys(all)
 	expKeys := []string{
 		".",
 		"potato",
@@ -147,8 +146,7 @@ func TestTraverse(t *testing.T) {
 		t.Errorf("got messages: %#v", messages)
 	}
 	all = files.Database()
-	keys = maps.Keys(all)
-	sort.Strings(keys)
+	keys = misc.SortedKeys(all)
 	expKeys = []string{
 		".",
 		"potato",
@@ -182,8 +180,7 @@ func TestTraverse(t *testing.T) {
 		t.Errorf("got messages: %#v", messages)
 	}
 	all = files.Database()
-	keys = maps.Keys(all)
-	sort.Strings(keys)
+	keys = misc.SortedKeys(all)
 	expKeys = []string{
 		"potato",
 		"quack",
@@ -298,7 +295,7 @@ func TestFilterInteraction(t *testing.T) {
 		t.Fatalf("traverse failed: %v", err)
 	}
 	allFiles := files.Database()
-	paths := maps.Keys(allFiles)
+	paths := misc.SortedKeys(allFiles)
 	expPaths := []string{
 		"one/two",
 		"two",
@@ -311,7 +308,6 @@ func TestFilterInteraction(t *testing.T) {
 	sort.Strings(expPaths)
 	sort.Strings(expMessages)
 	sort.Strings(messages)
-	sort.Strings(paths)
 	if !slices.Equal(paths, expPaths) {
 		t.Errorf("wrong paths: %#v", paths)
 	}

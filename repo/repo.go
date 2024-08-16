@@ -19,8 +19,8 @@ import (
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/sync"
 	"github.com/jberkenbilt/qfs/traverse"
-	"golang.org/x/exp/maps"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -199,7 +199,10 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 }
 
 func (r *Repo) cleanRepo() error {
-	extraKeys := maps.Keys(r.src.ExtraKeys())
+	var extraKeys []string
+	for k := range maps.Keys(r.src.ExtraKeys()) {
+		extraKeys = append(extraKeys, k)
+	}
 	sort.Strings(extraKeys)
 	if len(extraKeys) == 0 {
 		misc.Message("no objects to clean from repository")
@@ -243,7 +246,10 @@ func (r *Repo) migrateRepo() error {
 		misc.Message("no keys to migrate")
 		return nil
 	}
-	oldKeys := maps.Keys(toCopy)
+	var oldKeys []string
+	for k := range maps.Keys(toCopy) {
+		oldKeys = append(oldKeys, k)
+	}
 	sort.Strings(oldKeys)
 	misc.Message("----- keys to migrate -----")
 	for _, oldKey := range oldKeys {
@@ -1069,7 +1075,10 @@ func (r *Repo) ListVersions(path string, config *ListVersionsConfig) error {
 	if err != nil {
 		return err
 	}
-	fileNames := maps.Keys(files)
+	var fileNames []string
+	for k := range maps.Keys(files) {
+		fileNames = append(fileNames, k)
+	}
 	sort.Strings(fileNames)
 	for _, p := range fileNames {
 		data := files[p]
@@ -1121,8 +1130,7 @@ func (r *Repo) Get(path string, saveLocation string, config *GetConfig) error {
 	}
 	c := make(chan *versionData, numWorkers)
 	var allErrors []error
-	fileNames := maps.Keys(files)
-	sort.Strings(fileNames)
+	fileNames := misc.SortedKeys(files)
 	go func() {
 		for _, p := range fileNames {
 			data := files[p]
