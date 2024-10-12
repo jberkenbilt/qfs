@@ -1166,7 +1166,7 @@ func (r *Repo) Get(path string, saveLocation string, config *GetConfig) error {
 		c,
 		1, ///numWorkers,
 	)
-	return nil
+	return errors.Join(allErrors...)
 }
 
 func (r *Repo) PushTimes() error {
