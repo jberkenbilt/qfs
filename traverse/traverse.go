@@ -286,6 +286,10 @@ func (r *Result) Database() database.Database {
 		// If a directory is excluded but some of its descendants are included, the
 		// directory itself won't appear. This could be changed if desired, but it would
 		// involve an extra tree traversal.
+		if cur.info == nil {
+			// This can happen if there was an error from stat.
+			continue
+		}
 		if cur.included {
 			db[cur.info.Path] = cur.info
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/jberkenbilt/qfs/fileinfo"
 	"github.com/jberkenbilt/qfs/filter"
+	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/traverse"
 	"net"
@@ -17,6 +18,15 @@ import (
 	"testing"
 	"time"
 )
+
+func makeSocket(t *testing.T, socketPath string) net.Listener {
+	_ = os.Remove(socketPath)
+	sock, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("unix-domain socket listen: %v", err)
+	}
+	return sock
+}
 
 func TestTraverse(t *testing.T) {
 	uid := os.Getuid()
@@ -45,7 +55,7 @@ func TestTraverse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	err = os.WriteFile(filepath.Join(tmp, "one/two/moo"), []byte("oink"), 0644)
+	err = os.WriteFile(j("one/two/moo"), []byte("oink"), 0644)
 	if err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -53,12 +63,18 @@ func TestTraverse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mkfifo: %v", err)
 	}
-	socketPath := j("one/lost-sock")
-	_ = os.Remove(socketPath)
-	sock, err := net.Listen("unix", socketPath)
+	sock := makeSocket(t, j("one/lost-sock"))
+	defer func() { _ = sock.Close() }()
+	// Create a dangling socket. It is ignored.
+	sock = makeSocket(t, j("one/other-sock"))
+	_ = sock.Close()
+	statFails := j("one/stat-fails")
+	err = os.WriteFile(statFails, []byte("anything"), 0644)
 	if err != nil {
-		t.Fatalf("unix-domain socket listen: %v", err)
+		t.Fatalf("write file: %v", err)
 	}
+	localsource.TestFailOnStat = &statFails
+
 	defer func() { _ = sock.Close() }()
 	var allErrors []error
 	errFn := func(err error) {
@@ -76,12 +92,19 @@ func TestTraverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	if len(allErrors) > 0 {
-		t.Error(errors.Join(allErrors...).Error())
+	if len(allErrors) != 1 {
+		t.Errorf("didn't see right number of errors: %v", errors.Join(allErrors...))
+	} else {
+		err = allErrors[0]
+		if !strings.HasPrefix(err.Error(), "lstat "+tmp+"/one/stat-fails:") {
+			t.Errorf("wrong error: %v", err)
+		}
 	}
+	allErrors = nil
 	if len(messages) > 0 {
 		t.Errorf("got messages: %#v", messages)
 	}
+	_ = os.Remove(statFails)
 	all := files.Database()
 	keys := misc.SortedKeys(all)
 	expKeys := []string{
@@ -135,7 +158,7 @@ func TestTraverse(t *testing.T) {
 		t.Errorf("error returned: %v", err)
 	}
 	if len(allErrors) != 1 {
-		t.Errorf("error wasn't reported")
+		t.Errorf("didn't see right number of errors: %v", errors.Join(allErrors...))
 	} else {
 		err = allErrors[0]
 		if !strings.HasPrefix(err.Error(), "read dir "+tmp+"/one/two:") {

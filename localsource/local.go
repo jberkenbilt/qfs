@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var TestFailOnStat *string = nil
+
 type LocalSource struct {
 	top string
 }
@@ -51,9 +53,11 @@ func (ls *LocalSource) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	}
 	fullPath := ls.FullPath(path)
 	lst, err := os.Lstat(fullPath)
+	if TestFailOnStat != nil && *TestFailOnStat == fullPath {
+		TestFailOnStat = nil
+		err = syscall.ENOTCONN
+	}
 	if err != nil {
-		// TEST: CAN'T COVER. There is way to intentionally create a file that we can see
-		// in its directory but can't lstat, so this is not exercised.
 		return nil, fmt.Errorf("lstat %s: %w", fullPath, err)
 	}
 	fi.ModTime = lst.ModTime().Truncate(time.Millisecond)
