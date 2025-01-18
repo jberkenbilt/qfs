@@ -367,7 +367,10 @@ func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f *os.F
 		Key:    &key,
 	}
 	_, err := s.downloader.Download(ctx, f, input)
-	return err
+	if err != nil {
+		return fmt.Errorf("downloading %s: %w", key, err)
+	}
+	return nil
 }
 
 func (s *S3Source) Database(
