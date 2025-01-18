@@ -62,7 +62,7 @@ type parser struct {
 // the option's entry is called. Otherwise, the `""` entry is called for
 // positional options.
 
-const Version = "0.1.3"
+const Version = "0.1.4"
 
 type argHandler struct {
 	fn   func(*parser, string) error
