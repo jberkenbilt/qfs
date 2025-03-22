@@ -241,7 +241,7 @@ func TestS3Source(t *testing.T) {
 	testutil.Check(t, database.WriteDb(j("qfs-from-s3").Path(), mem1, database.DbQfs))
 	testutil.Check(t, database.WriteDb(j("repo-from-s3").Path(), mem1, database.DbRepo))
 	stdout, stderr := testutil.WithStdout(func() {
-		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("repo-from-s3").Path()})
+		err = qfs.RunWithArgs([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("repo-from-s3").Path()})
 		if err != nil {
 			t.Errorf("error from diff: %v", err)
 		}
@@ -250,7 +250,7 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("output: %s\n%s", stdout, stderr)
 	}
 	stdout, stderr = testutil.WithStdout(func() {
-		err = qfs.Run([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("files").Path()})
+		err = qfs.RunWithArgs([]string{"qfs", "diff", j("qfs-from-s3").Path(), j("files").Path()})
 		if err != nil {
 			t.Errorf("error from diff: %v", err)
 		}
@@ -556,7 +556,7 @@ func TestMigrate(t *testing.T) {
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // Continue?
-			_ = qfs.Run([]string{"qfs", "init-repo", "-migrate", "-top", tmp})
+			_ = qfs.RunWithArgs([]string{"qfs", "init-repo", "--migrate", "--top", tmp})
 		},
 		`repo/one/in-sync -> repo/one/in-sync@f,1715856724523,0644
 repo/two/also-in-sync -> repo/two/also-in-sync@f,1715856724523,0444
@@ -582,7 +582,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // Continue?
-			_ = qfs.Run([]string{"qfs", "push", "-top", tmp})
+			_ = qfs.RunWithArgs([]string{"qfs", "push", "--top", tmp})
 		},
 		`mkdir .
 mkdir .qfs
@@ -620,7 +620,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y"
-			_ = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", tmp})
+			_ = qfs.RunWithArgs([]string{"qfs", "init-repo", "--clean-repo", "--top", tmp})
 		},
 		`repo/one/out-of-date
 prompt: Remove above keys?
@@ -647,12 +647,12 @@ func checkSync(t *testing.T, srcDir, destDir, filter string) {
 	marker := filepath.Join(destDir, "z")
 	writeFile(t, marker, time.Now().UnixMilli(), 0644, "")
 	defer func() { _ = os.Remove(marker) }()
-	testutil.Check(t, qfs.Run([]string{"qfs", "scan", srcDir, "-filter", filter, "-db", j("src-db")}))
-	testutil.Check(t, qfs.Run([]string{"qfs", "scan", destDir, "-db", j("dest-db")}))
+	testutil.Check(t, qfs.RunWithArgs([]string{"qfs", "scan", srcDir, "--filter", filter, "--db", j("src-db")}))
+	testutil.Check(t, qfs.RunWithArgs([]string{"qfs", "scan", destDir, "--db", j("dest-db")}))
 	testutil.ExpStdout(
 		t,
 		func() {
-			err := qfs.Run([]string{"qfs", "diff", j("src-db"), j("dest-db")})
+			err := qfs.RunWithArgs([]string{"qfs", "diff", j("src-db"), j("dest-db")})
 			if err != nil {
 				t.Error(err.Error())
 			}
@@ -684,13 +684,13 @@ func TestLifecycle(t *testing.T) {
 	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0o777))
 
 	// Attempt to initialize without a repository configuration.
-	err := qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	err := qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
 	if err == nil || !strings.Contains(err.Error(), "/site1/.qfs/repo:") {
 		t.Errorf("expected no repo config: %v", err)
 	}
 
 	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "invalid contents")
-	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
 	if err == nil || !strings.Contains(err.Error(), "must contain s3://bucket/prefix") {
 		t.Errorf("expected no repo config: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestLifecycle(t *testing.T) {
 	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+TestBucket+"/home")
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
-	err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+	err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
 	if err != nil {
 		t.Errorf("init: %v", err)
 	}
@@ -713,7 +713,7 @@ func TestLifecycle(t *testing.T) {
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
 			if err == nil || !strings.Contains(err.Error(), "already initialized") {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -728,7 +728,7 @@ func TestLifecycle(t *testing.T) {
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "init-repo", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("error: %v", err)
 			}
@@ -742,7 +742,7 @@ func TestLifecycle(t *testing.T) {
 	})
 
 	// Do the initial push without initializing site
-	err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+	err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 	if err == nil || !strings.Contains(err.Error(), "site1/.qfs/site:") {
 		t.Errorf("wrong error: %v", err)
 	}
@@ -822,7 +822,7 @@ excluded/included
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // Continue?
-			err = qfs.Run([]string{"qfs", "push", "-cleanup", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--cleanup", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -912,7 +912,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -930,11 +930,11 @@ prompt: Continue?
 	})
 
 	testutil.Check(t, os.MkdirAll(j("sync"), 0777))
-	err = qfs.Run([]string{
+	err = qfs.RunWithArgs([]string{
 		"qfs",
 		"sync",
 		"-n",
-		"-filter",
+		"--filter",
 		j("site1/.qfs/filters/site1"),
 		j("site1"),
 		j("sync"),
@@ -950,7 +950,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -974,7 +974,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "n" // Continue?
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err == nil || err.Error() != "exiting" {
 				t.Errorf("%v", err)
 			}
@@ -1001,7 +1001,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // Continue?
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1041,7 +1041,7 @@ dir4
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("pull: %v", err)
 			}
@@ -1095,7 +1095,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1114,11 +1114,11 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"sync",
-				"-n",
-				"-filter",
+				"--no-op",
+				"--filter",
 				j("site2/.qfs/filters/site2"),
 				j("site2"),
 				j("sync"),
@@ -1149,10 +1149,10 @@ add dir2/link-to-remove
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"sync",
-				"-filter",
+				"--filter",
 				j("site2/.qfs/filters/site2"),
 				j("site2"),
 				j("sync"),
@@ -1182,10 +1182,10 @@ add dir2/link-to-remove
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"sync",
-				"-filter",
+				"--filter",
 				j("site2/.qfs/filters/site2"),
 				j("site2"),
 				j("sync2"),
@@ -1211,10 +1211,10 @@ add dir2/link-to-remove
 	checkSync(t, j("site2"), j("sync2"), j("site2/.qfs/filters/site2"))
 	lvOut1, _ := testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				".qfs/db/repo",
 			}))
@@ -1229,10 +1229,10 @@ add dir2/link-to-remove
 
 	// Check also with push-times.
 	ptOut, _ := testutil.WithStdout(func() {
-		testutil.Check(t, qfs.Run([]string{
+		testutil.Check(t, qfs.RunWithArgs([]string{
 			"qfs",
 			"push-times",
-			"-top",
+			"--top",
 			j("site1"),
 		}))
 	})
@@ -1247,10 +1247,10 @@ add dir2/link-to-remove
 	// Save the output of a listing at this time.
 	lvOut1, _ = testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
 			}))
@@ -1258,13 +1258,13 @@ add dir2/link-to-remove
 	)
 	lvOutLong1, _ := testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
-				"-long",
+				"--long",
 			}))
 		},
 	)
@@ -1314,7 +1314,7 @@ add dir2/link-to-remove
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "-n", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1370,7 +1370,7 @@ chmod 0750 dir2/dir-to-chmod
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1464,7 +1464,7 @@ prompt: Continue?
 	testutil.CheckLinesSorted(
 		t,
 		splitFields,
-		[]string{"qfs", "scan", "repo:", "-top", j("site1")},
+		[]string{"qfs", "scan", "repo:", "--top", j("site1")},
 		[]string{
 			"d .",
 			"d .qfs",
@@ -1508,7 +1508,7 @@ prompt: Continue?
 	testutil.CheckLinesSorted(
 		t,
 		splitFields,
-		[]string{"qfs", "scan", "repo:site2", "-top", j("site2")},
+		[]string{"qfs", "scan", "repo:site2", "--top", j("site2")},
 		[]string{
 			"d .",
 			"d .qfs",
@@ -1544,7 +1544,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "-n", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1595,7 +1595,7 @@ chmod 0750 dir2/dir-to-chmod
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1669,14 +1669,14 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"diff",
 				j("site1"),
 				j("site2"),
-				"-filter",
+				"--filter",
 				j("site1/.qfs/filters/site1"),
-				"-filter",
+				"--filter",
 				j("site1/.qfs/filters/site2"),
 			})
 		},
@@ -1698,7 +1698,7 @@ dir3
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1715,7 +1715,7 @@ dir3
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site2"), "-local-filter"})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "-n", "--top", j("site2"), "--local-filter"})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1738,7 +1738,7 @@ add dir3/only-in-site1
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-n", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "-n", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1771,7 +1771,7 @@ add dir3/only-in-site1
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "-n", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1793,7 +1793,7 @@ change dir2/dir-then-file
 		t,
 		func() {
 			misc.TestPromptChannel <- "n" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err == nil || err.Error() != "exiting" {
 				t.Errorf("%v", err)
 			}
@@ -1816,7 +1816,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1847,7 +1847,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push", "-n", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "-n", "--top", j("site1")})
 			if err == nil || err.Error() != "conflicts detected" {
 				t.Errorf("%v", err)
 			}
@@ -1866,7 +1866,7 @@ conflict: dir2/dir-then-file
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // conflicts detected
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err == nil || err.Error() != "conflicts detected" {
 				t.Errorf("%v", err)
 			}
@@ -1887,7 +1887,7 @@ prompt: Conflicts detected. Exit?
 		func() {
 			misc.TestPromptChannel <- "n" // conflicts detected
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1920,7 +1920,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -1947,7 +1947,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // conflicts detected
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err == nil || err.Error() != "conflicts detected" {
 				t.Errorf("%v", err)
 			}
@@ -1973,7 +1973,7 @@ prompt: Conflicts detected. Exit?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err == nil || !strings.Contains(err.Error(), ".qfs/busy exists") {
 				t.Errorf("%v", err)
 			}
@@ -1995,7 +1995,7 @@ prompt: Conflicts detected. Exit?
 		func() {
 			misc.TestPromptChannel <- "n" // conflicts detected
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2021,10 +2021,10 @@ prompt: Continue?
 	// Check versions again
 	lvOut2, _ := testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				".qfs/db/repo",
 			}))
@@ -2046,27 +2046,27 @@ prompt: Continue?
 	// previous time. This should match the earlier listing.
 	lvOut2, _ = testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
-				"-as-of",
+				"--as-of",
 				pushTime1,
 			}))
 		},
 	)
 	lvOutLong2, _ := testutil.WithStdout(
 		func() {
-			testutil.Check(t, qfs.Run([]string{
+			testutil.Check(t, qfs.RunWithArgs([]string{
 				"qfs",
 				"list-versions",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
-				"-long",
-				"-as-of",
+				"--long",
+				"--as-of",
 				pushTime1,
 			}))
 		},
@@ -2082,7 +2082,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2103,7 +2103,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err == nil || !strings.Contains(err.Error(), ".qfs/busy exists") {
 				t.Errorf("%v", err)
 			}
@@ -2120,7 +2120,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2142,10 +2142,10 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"sync",
-				"-filter",
+				"--filter",
 				j("site2/.qfs/filters/site2"),
 				j("site2"),
 				j("sync"),
@@ -2182,10 +2182,10 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"get",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
 				j("get1"),
@@ -2206,7 +2206,7 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{
+			err = qfs.RunWithArgs([]string{
 				"qfs",
 				"diff",
 				j("sync/dir1"),
@@ -2223,10 +2223,10 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{
+			err = qfs.RunWithArgs([]string{
 				"qfs",
 				"get",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
 				j("get1"),
@@ -2242,14 +2242,14 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"get",
-				"-top",
+				"--top",
 				j("site2"),
 				"dir1",
 				j("get2"),
-				"-as-of",
+				"--as-of",
 				pushTime1,
 			})
 		},
@@ -2269,7 +2269,7 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{
+			err = qfs.RunWithArgs([]string{
 				"qfs",
 				"diff",
 				j("sync2/dir1"),
@@ -2287,10 +2287,10 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"get",
-				"-top",
+				"--top",
 				j("site1"),
 				"dir1",
 				j("get3"),
@@ -2312,7 +2312,7 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{
+			err = qfs.RunWithArgs([]string{
 				"qfs",
 				"diff",
 				j("sync/dir1"),
@@ -2330,14 +2330,14 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			_ = qfs.Run([]string{
+			_ = qfs.RunWithArgs([]string{
 				"qfs",
 				"diff",
 				j("site1"),
 				j("site2"),
-				"-filter",
+				"--filter",
 				j("site1/.qfs/filters/site1"),
-				"-filter",
+				"--filter",
 				j("site1/.qfs/filters/site2"),
 			})
 		},
@@ -2350,7 +2350,7 @@ dir1/ro-file-to-change
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--clean-repo", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2379,7 +2379,7 @@ excluded/included
 		t,
 		func() {
 			misc.TestPromptChannel <- "y" // continue
-			err = qfs.Run([]string{"qfs", "push", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2409,7 +2409,7 @@ prompt: Continue?
 	testutil.Check(t, err)
 	stdout, _ := testutil.WithStdout(func() {
 		misc.TestPromptChannel <- "y"
-		err = qfs.Run([]string{"qfs", "init-repo", "-clean-repo", "-top", j("site1")})
+		err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--clean-repo", "--top", j("site1")})
 		if err != nil {
 			t.Errorf("%v", err)
 		}
@@ -2435,7 +2435,7 @@ $`)
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site1")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site1")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2453,7 +2453,7 @@ $`)
 		t,
 		func() {
 			misc.TestPromptChannel <- "y"
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2478,7 +2478,7 @@ prompt: Continue?
 	testutil.ExpStdout(
 		t,
 		func() {
-			err = qfs.Run([]string{"qfs", "push-db", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "push-db", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}
@@ -2494,7 +2494,7 @@ prompt: Continue?
 		t,
 		func() {
 			misc.TestPromptChannel <- "y"
-			err = qfs.Run([]string{"qfs", "pull", "-top", j("site2")})
+			err = qfs.RunWithArgs([]string{"qfs", "pull", "--top", j("site2")})
 			if err != nil {
 				t.Errorf("%v", err)
 			}

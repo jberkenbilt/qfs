@@ -45,7 +45,7 @@ func TestScanStdout(t *testing.T) {
 	time.Local, _ = time.LoadLocation("EST5EDT")
 	var err error
 	data, _ := testutil.WithStdout(func() {
-		err = qfs.Run([]string{
+		err = qfs.RunWithArgs([]string{
 			"qfs",
 			"scan",
 			"testdata/all-types.qfs",
@@ -59,11 +59,11 @@ func TestScanStdout(t *testing.T) {
 	}
 
 	data, _ = testutil.WithStdout(func() {
-		err = qfs.Run([]string{
+		err = qfs.RunWithArgs([]string{
 			"qfs",
 			"scan",
-			"-long",
-			"-xdev",
+			"--long",
+			"--xdev",
 			"testdata/all-types.qfs",
 		})
 	})
@@ -76,7 +76,7 @@ func TestScanStdout(t *testing.T) {
 }
 
 func TestScanError(t *testing.T) {
-	err := qfs.Run([]string{
+	err := qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"/does/not/exist",
@@ -84,7 +84,7 @@ func TestScanError(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "scan: stat /does/not/exist:") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = qfs.Run([]string{
+	err = qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"/dev/null",
@@ -96,7 +96,7 @@ func TestScanError(t *testing.T) {
 
 func TestDiffError(t *testing.T) {
 	tmp := t.TempDir()
-	err := qfs.Run([]string{
+	err := qfs.RunWithArgs([]string{
 		"qfs",
 		"diff",
 		"/does/not/exist",
@@ -105,7 +105,7 @@ func TestDiffError(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "diff: stat /does/not/exist:") {
 		t.Errorf("wrong error: %v", err)
 	}
-	err = qfs.Run([]string{
+	err = qfs.RunWithArgs([]string{
 		"qfs",
 		"diff",
 		tmp,
@@ -135,12 +135,12 @@ func TestScanDir(t *testing.T) {
 	defer func() { _ = os.Chmod(j("files/x/one/two"), 0777) }()
 	top := j("files")
 	stdout, stderr := testutil.WithStdout(func() {
-		err = qfs.Run([]string{
+		err = qfs.RunWithArgs([]string{
 			"qfs",
 			"scan",
-			"-junk",
+			"--junk",
 			"~$",
-			"-cleanup",
+			"--cleanup",
 			top,
 		})
 	})
@@ -169,12 +169,12 @@ func TestScanDir(t *testing.T) {
 	}
 	filesDb := "testdata/files.qfs"
 	stdout, stderr = testutil.WithStdout(func() {
-		err = qfs.Run([]string{
+		err = qfs.RunWithArgs([]string{
 			"qfs",
 			"diff",
 			filesDb,
-			"-no-ownerships",
-			"-non-file-times",
+			"--no-ownerships",
+			"--non-file-times",
 			j("files"),
 		})
 	})
@@ -214,11 +214,11 @@ func TestDiff(t *testing.T) {
 	testutil.Check(t, os.WriteFile(j("top/f3"), []byte("file"), 0666))
 	testutil.Check(t, os.WriteFile(j("top/f4"), []byte("file"), 0666))
 	testutil.Check(t, os.Symlink("target", j("top/link")))
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		j("top"),
-		"-db",
+		"--db",
 		j("1.qfs"),
 	}))
 	time.Sleep(20 * time.Millisecond)
@@ -268,23 +268,23 @@ func TestDiff(t *testing.T) {
 			"chown 517: other/socket",
 			"chown :617 qfs",
 		})
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
-		"-include",
+		"--include",
 		".",
-		"-exclude",
+		"--exclude",
 		"RCS",
-		"-exclude",
+		"--exclude",
 		"*/.idea",
-		"-include",
+		"--include",
 		"*/.gitignore",
-		"-junk",
+		"--junk",
 		"~$",
-		"-prune",
+		"--prune",
 		"qfs/coverage",
-		"-db",
+		"--db",
 		j("2.qfs"),
 	}))
 	testutil.CheckLines(
@@ -345,12 +345,12 @@ func TestDiff(t *testing.T) {
 			"rm qfs/coverage/coverage.html",
 		},
 	)
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
 		"-f",
-		"-db",
+		"--db",
 		j("2.qfs"),
 	}))
 	testutil.CheckLines(
@@ -395,12 +395,12 @@ func TestDiff(t *testing.T) {
 			"rm yes",
 		},
 	)
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
-		"-no-special",
-		"-db",
+		"--no-special",
+		"--db",
 		j("2.qfs"),
 	}))
 	testutil.CheckLines(
@@ -418,15 +418,15 @@ func TestDiff(t *testing.T) {
 			"rm other/zero",
 		},
 	)
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
-		"-filter",
+		"--filter",
 		"testdata/filter1",
-		"-filter",
+		"--filter",
 		"testdata/filter2",
-		"-db",
+		"--db",
 		j("2.qfs"),
 	}))
 	testutil.CheckLines(
@@ -452,9 +452,9 @@ func TestDiff(t *testing.T) {
 			"qfs",
 			"diff",
 			"testdata/real.qfs",
-			"-filter",
+			"--filter",
 			"testdata/filter1",
-			"-filter",
+			"--filter",
 			"testdata/filter2",
 			j("2.qfs"),
 		},
@@ -462,13 +462,13 @@ func TestDiff(t *testing.T) {
 		// is no expected difference since 2.qfs was created by applying those filters.
 		nil,
 	)
-	testutil.Check(t, qfs.Run([]string{
+	testutil.Check(t, qfs.RunWithArgs([]string{
 		"qfs",
 		"scan",
 		"testdata/real.qfs",
-		"-filter-prune",
+		"--filter-prune",
 		"testdata/filter1",
-		"-db",
+		"--db",
 		j("2.qfs"),
 	}))
 	testutil.CheckLines(
@@ -490,9 +490,10 @@ func TestDiff(t *testing.T) {
 
 func TestCLI(t *testing.T) {
 	checkCli := func(cmd []string, expErr string) {
+		t.Helper()
 		var err error
 		stdout, stderr := testutil.WithStdout(func() {
-			err = qfs.Run(cmd)
+			err = qfs.RunWithArgs(cmd)
 		})
 		if err == nil {
 			t.Errorf("no error")
@@ -503,27 +504,26 @@ func TestCLI(t *testing.T) {
 			t.Errorf("stdout=%s, stderr=%s", stdout, stderr)
 		}
 	}
-	checkCli(nil, "no arguments provided")
-	checkCli([]string{"qfs"}, "run qfs --help for help")
-	checkCli([]string{"qfs", "scan"}, "scan requires an input")
-	checkCli([]string{"qfs", "scan", "a", "a"}, "an input has already been specified")
-	checkCli([]string{"qfs", "diff", "a"}, "diff requires two inputs")
-	checkCli([]string{"qfs", "diff", "a", "a", "a"}, "inputs have already been specified")
-	checkCli([]string{"qfs", "scan", "-db"}, "db requires an argument")
-	checkCli([]string{"qfs", "scan", "-include"}, "include requires an argument")
-	checkCli([]string{"qfs", "scan", "-filter"}, "filter requires an argument")
-	checkCli([]string{"qfs", "potato"}, "unknown subcommand")
-	checkCli([]string{"qfs", "scan", "-potato"}, "unknown option")
-	checkCli([]string{"qfs", "scan", "-junk", "??*"}, "regexp error on ??*")
-	checkCli([]string{"qfs", "scan", "-filter", "testdata/bad-filter"}, "testdata/bad-filter:1: regexp error")
-	checkCli([]string{"qfs", "init-repo", "x"}, "unexpected positional argument \"x\"")
-	checkCli([]string{"qfs", "init-repo", "-top"}, "top requires an argument")
+	// Many of these messages are specific to cobra/pflag. Hopefully Hyrum's law prevents
+	// the error strings from changing.
+	checkCli([]string{"qfs", "scan"}, "scan-input must be specified")
+	checkCli([]string{"qfs", "scan", "a", "a"}, "scan-input has already been specified")
+	checkCli([]string{"qfs", "diff", "a"}, "old-scan-input new-scan-input must be specified")
+	checkCli([]string{"qfs", "diff", "a", "a", "a"}, "old-scan-input new-scan-input have already been specified")
+	checkCli([]string{"qfs", "scan", "--db"}, "needs an argument")
+	checkCli([]string{"qfs", "scan", "--include"}, "needs an argument")
+	checkCli([]string{"qfs", "scan", "--filter"}, "needs an argument")
+	checkCli([]string{"qfs", "scan", "--potato"}, "unknown")
+	checkCli([]string{"qfs", "scan", "--junk", "??*"}, "regexp error on ??*")
+	checkCli([]string{"qfs", "scan", "--filter", "testdata/bad-filter"}, "testdata/bad-filter:1: regexp error")
+	checkCli([]string{"qfs", "init-repo", "x"}, "unknown")
+	checkCli([]string{"qfs", "init-repo", "--top"}, "needs an argument")
 }
 
 func TestHelpVersion(t *testing.T) {
 	cases := map[string]string{
 		"--version": "qfs version ",
-		"--help":    "qfs subcommand [options]",
+		"--help":    "qfs creates a flat-file database",
 	}
 	for arg, text := range cases {
 		t.Run(arg, func(t *testing.T) {
@@ -531,7 +531,7 @@ func TestHelpVersion(t *testing.T) {
 				defer func() {
 					_ = recover()
 				}()
-				testutil.Check(t, qfs.Run([]string{"qfs", arg}))
+				testutil.Check(t, qfs.RunWithArgs([]string{"qfs", arg}))
 			})
 			if !strings.Contains(string(stdout), text) {
 				t.Errorf("didn't see expected text")

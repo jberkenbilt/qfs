@@ -97,25 +97,24 @@ The `qfs` command is run as
 qfs subcommand [options]
 ```
 
-* All options can be `-opt` or `--opt`
 * All dates and times options are local times represented as `yyyy-mm-dd[_hh:mm:ss[.sss]]`.
 * Some commands accept filtering options:
-  * One or more filters (see [Filters](#filters) may be given with `-filter` or `-filter-prune`.
+  * One or more filters (see [Filters](#filters) may be given with `--filter` or `--filter-prune`.
     When multiple filters are given, a file must be included by all of them to be included.
   * Explicit rules create a dynamic filter. If any dynamic rules are given, the single dynamic
     filter is used alongside any explicit filters.
   * These arguments are allowed wherever _filter options_ appears
-    * `-filter f` -- specify a filter file
-    * `-filter-prune f` -- specify a filter file from which only prune and junk directives are read
-    * `-include x` -- add an include directive to the dynamic filter
-    * `-exclude x` -- add an exclude directive to the dynamic filter
-    * `-prune x` -- add a prune directive to the dynamic filter
-    * `-junk x` -- add a junk directive to the dynamic filter
+    * `--filter f` -- specify a filter file
+    * `--filter-prune f` -- specify a filter file from which only prune and junk directives are read
+    * `--include x` -- add an include directive to the dynamic filter
+    * `--exclude x` -- add an exclude directive to the dynamic filter
+    * `--prune x` -- add a prune directive to the dynamic filter
+    * `--junk x` -- add a junk directive to the dynamic filter
     * Options that only apply when scanning a file system (not a database):
-      * `-cleanup` -- remove any plain file that is classified as junk by any of the filters
-      * `-xdev` -- don't cross device boundaries
+      * `--cleanup` -- remove any plain file that is classified as junk by any of the filters
+      * `--xdev` -- don't cross device boundaries
 * All commands that operate on the repository look for a directory called `.qfs` in the current
-  directory and accept `-top path` to specify a different top-level directory of the repository.
+  directory and accept `--top path` to specify a different top-level directory of the repository.
 
 ## qfs Subcommands
 
@@ -126,63 +125,63 @@ qfs subcommand [options]
     * `repo:` -- scan repository with repo encoding awareness
     * `repo:$site` -- scan repository copy of site database for given site
       * Example: to see what a different site may have in a particular directory, you could run
-      `qfs scan repo:other-site -include some/path`
+      `qfs scan repo:other-site --include some/path`
     * `s3://bucket[/prefix]` -- general concurrent S3 scan, much faster than `aws s3 ls`
-      * `-db` is ignored
-      * With `-long`, output `mtime size key`; otherwise, just output `key`
+      * `--db` is ignored
+      * With `--long`, output `mtime size key`; otherwise, just output `key`
       * Output order is non-deterministic
   * _filter options_
-  * `-db` -- optionally specify an output database; if not specified, write to stdout in
+  * `--db` -- optionally specify an output database; if not specified, write to stdout in
     human-readable form
-  * `-f` -- include only files and symlinks
-  * `-no-special` -- omit special files (devices, pipes, sockets)
-  * `-top path` -- specify top-level directory of repository for `repo:...` only
+  * `-f|--files-only` -- include only files and symlinks
+  * `--no-special` -- omit special files (devices, pipes, sockets)
+  * `--top path` -- specify top-level directory of repository for `repo:...` only
   * Only when output is stdout (not a database):
-    * `-long` -- if writing to stdout, include uid/gid data, which is usually omitted
+    * `--long` -- if writing to stdout, include uid/gid data, which is usually omitted
 * `diff` -- compare two inputs, possibly applying additional filters (replaces `qsdiff`)
   * See [Diff Format](#diff-format)
   * Positional: twice: input, then output directory or database
   * _filter options_
-  * `-non-file-times` -- include modification time changes of non-files, which are usually ignored
-  * `-no-ownerships` -- ignore uid/gid changes
-  * `-checks` -- output conflict checking data
+  * `--non-file-times` -- include modification time changes of non-files, which are usually ignored
+  * `--no-ownerships` -- ignore uid/gid changes
+  * `--checks` -- output conflict checking data
 * `init-repo` -- initialize a repository
   * See [Sites](#sites)
-  * `-clean-repo` -- removes all objects under the prefix that are not included by the filter. This
+  * `--clean-repo` -- removes all objects under the prefix that are not included by the filter. This
     includes objects that weren't put there by qfs.
-  * `-migrate` -- converts an area in S3 populated by `aws s3 sync` to qfs -- see [Migration From S3
+  * `--migrate` -- converts an area in S3 populated by `aws s3 sync` to qfs -- see [Migration From S3
     Sync](#migration-from-s3-sync).
 * `init-site` -- initialize a new site
   * See [Sites](#sites)
 * `push`
   * See [Sites](#sites)
-  * `-cleanup` -- cleans junk files
-  * `-n` -- perform conflict checking but make no changes
+  * `--cleanup` -- cleans junk files
+  * `-n|--no-op` -- perform conflict checking but make no changes
 * `pull`
   * See [Sites](#sites)
-  * `-n` -- perform conflict checking but make no changes
-  * `-local-filter` -- use the local filter; useful for pulling after a filter change
+  * `-n|--no-op` -- perform conflict checking but make no changes
+  * `--local-filter` -- use the local filter; useful for pulling after a filter change
 * `push-db` -- regenerate local db and push to repository
   * When followed by `pull`, this can be used to revert a site to the state of the repo.
 * `push-times` -- list the times at which pushes were made; useful for `list-versions` and `get`
 * `list-versions path` -- list all known versions of file in the repository at or below a specified
   path. For this to be useful, bucket versioning should be enabled.
   * _filter options_
-  * `-not-after timestamp` -- list versions no later than the given time. The timestamp may be
+  * `--not-after timestamp` -- list versions no later than the given time. The timestamp may be
     specified as either an epoch time with second or millisecond granularity or a string of the form
     `yyyy-mm-dd` or `yyyy-mm-dd_hh:mm:ss`. Epoch times are always interpreted as UTC. The other
     format is interpreted as local time. Note that S3 version timestamp granularity is one second.
-  * `-long` --show key and version
+  * `--long` --show key and version
 * `get path save-location` -- copy a file/directory from the repository and save relative to the
   specified location; `save-location/path` must not exist.
   * _filter options_
-  * `-as-of timestamp` -- get the file as it existed in the repository at the given time. The
-    timestamp has the same format as `-not-after` for `list-versions`.
+  * `--as-of timestamp` -- get the file as it existed in the repository at the given time. The
+    timestamp has the same format as `--not-after` for `list-versions`.
 * `sync src dest` -- synchronize the destination directory with the source directory subject to
   filtering rules. Files are added, updated, or removed from dest so that dest contains only files
   from src that are included by the filters.
   * _filter options_
-  * `-n` -- report what would be done without doing it
+  * `-n|--no-op` -- report what would be done without doing it
 
 # Filters
 
@@ -273,7 +272,7 @@ The `qfs diff` command generates output consisting of lines that provide informa
 used for [conflict detection](#conflict-detection). Each line is one of the following:
 
 * `check [mtime] ...] - filename` -- Verify that the file has one of the listed modification time
-  values or doesn't exist. If none given, verify that the file does not exist. Only if `-checks` is
+  values or doesn't exist. If none given, verify that the file does not exist. Only if `--checks` is
   specified.
 * `typechange filename` -- the type of a file changed; this is strictly informational as `rm` and
   `mkdir/add` directives will also appear
@@ -284,8 +283,8 @@ used for [conflict detection](#conflict-detection). Each line is one of the foll
 * `add filename` -- file, link, or special was added
 * `chmod nnnn filename` -- mode change without content change
 * `chown [nnnn]:[nnnn] filename` -- uid/gid change without content change. Omitted with
-  `-no-ownerships`.
-* `mtime dir` -- a modification time changed of other than a file; only with `-non-file-times`.
+  `--no-ownerships`.
+* `mtime dir` -- a modification time changed of other than a file; only with `--non-file-times`.
 
 # Database
 
@@ -444,7 +443,7 @@ the user to reconcile the database first before it does anything.
 When doing push or pull operations, the repository filter and the site filter are always both used,
 so a file has to be included by both filters to be considered. This means that excluding a
 previously included item in a filter does not cause the item to disappear on the next push or pull.
-It just causes the item to be untracked. You can use `qfs init-repo -clean-repo` to force excluded
+It just causes the item to be untracked. You can use `qfs init-repo --clean-repo` to force excluded
 files to be removed from the repository. To clarify:
 * If `dir` exists and is included by the filter, `push` will push it to the repository.
 * If `dir` is removed but it is still included by the filter, `push` will remove it from the
@@ -458,7 +457,7 @@ files to be removed from the repository. To clarify:
 ### Note about diff
 
 Many site operations create diffs. For site operations, all diffs are generated with
-`-no-ownerships`, `-no-special`, and `-checks`.
+`--no-ownerships`, `--no-special`, and `--checks`.
 
 ### Initialize/Repair Repository
 
@@ -572,7 +571,7 @@ Run `qfs pull`. This does the following:
 * Download the repository's copy of its own database to `.qfs/db/repo.tmp`
 * Read the repository's copy of the current site's database into memory, and diff it against the
   repository's copy of its own database (which we just downloaded) using the repository's copies of
-  the global filter and the site's filter. If `-local-filter` was given, use the local filter
+  the global filter and the site's filter. If `--local-filter` was given, use the local filter
   instead of the repository filter. This is useful if you modify the filter to include
   previously-excluded items that are present on the repository and want to pull again to download
   them. For bootstrapping to work:
@@ -617,7 +616,7 @@ locally and then run a push.
 ### Migration From S3 Sync
 
 If you have a collection of files that you have been backing up to S3 with `aws s3 sync`, you can
-use the `-migrate` option to `init-repo` to convert it to a `qfs` repository. You may want to
+use the `--migrate` option to `init-repo` to convert it to a `qfs` repository. You may want to
 temporarily suspend S3 versioning for this option to avoid creating an unnecessary copy of
 everything in the bucket. `aws s3 sync` copies a local file into the S3 bucket if the local file's
 modification time is more recent than the last-modified time in S3. As such, it works fine if you
@@ -631,13 +630,13 @@ file's modification time, it will call `CopyObject` on the key to copy it to the
 use (with the modification time and permissions) followed by a `DeleteObject` on the original key.
 This prevents you from having to re-upload the file. A typical workflow would be
 * Suspend versioning on the S3 bucket.
-* Run `qfs init-repo -migrate`, which will move any existing keys that `aws s3 sync` would consider
+* Run `qfs init-repo --migrate`, which will move any existing keys that `aws s3 sync` would consider
   current so that `qfs` will also consider them current.
 * Re-enable versioning on the S3 bucket.
 * Set up the repository and site filters.
 * Run `qfs push`. This will push everything that wasn't migrated, including directories, links, and
   qfs filters.
-* Run `qfs init-repo -clean-repo`. This will remove any stray files including files that `aws s3
+* Run `qfs init-repo --clean-repo`. This will remove any stray files including files that `aws s3
   sync` would have considered to be out-of-date. This has to be done after the initial push so the
   repository filter is there.
 

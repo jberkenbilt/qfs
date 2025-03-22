@@ -3,7 +3,6 @@ package qfs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -17,6 +16,7 @@ import (
 	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/scan"
 	"github.com/jberkenbilt/qfs/sync"
+	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,10 +32,6 @@ var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var dateTimeRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2}(?:\.\d{3})?$`)
 
 type parser struct {
-	progName      string
-	args          []string
-	arg           int
-	action        actionKey
 	top           string // local root directory instead of current directory
 	input1        string
 	input2        string
@@ -52,6 +48,8 @@ type parser struct {
 	checks        bool
 	noOp          bool
 	localFilter   bool
+	initCleanRepo bool
+	initMigrate   bool
 	initMode      repo.InitMode
 	timestamp     time.Time
 }
@@ -65,34 +63,31 @@ type parser struct {
 const Version = "0.1.4"
 
 type argHandler struct {
-	fn   func(*parser, string) error
+	fn   func(*parser, *cobra.Command, string, string)
 	help string
 }
 
-type actionKey int
-
 const (
-	actNone actionKey = iota
-	actScan
-	actDiff
-	actInitRepo
-	actPush
-	actPull
-	actPushDb
-	actSync
-	actPushTimes
-	actListVersions
-	actGet
+	actScan         = "scan"
+	actDiff         = "diff"
+	actInitRepo     = "init-repo"
+	actPush         = "push"
+	actPull         = "pull"
+	actPushDb       = "push-db"
+	actSync         = "sync"
+	actPushTimes    = "push-times"
+	actListVersions = "list-versions"
+	actGet          = "get"
 )
 
-func arg(fn func(*parser, string) error, help string) argHandler {
+func arg(fn func(*parser, *cobra.Command, string, string), help string) argHandler {
 	return argHandler{
 		fn:   fn,
 		help: help,
 	}
 }
 
-var argTables = func() map[actionKey]map[string]argHandler {
+var argTables = func() map[string]map[string]argHandler {
 	var filterArgs = map[string]argHandler{
 		"filter":       arg(argFilter, "filter file"),
 		"filter-prune": arg(argFilter, "filter file -- read prune/junk only"),
@@ -100,17 +95,11 @@ var argTables = func() map[actionKey]map[string]argHandler {
 		"exclude":      arg(argDynamicFilter, "exclude directive for dynamic filter"),
 		"prune":        arg(argDynamicFilter, "prune directive for dynamic filter"),
 		"junk":         arg(argDynamicFilter, "junk directive for dynamic filter"),
-		"f":            arg(argFilesOnly, "files and symbolic links only"),
+		"files-only":   arg(argFilesOnly, "files and symbolic links only"),
 		"no-special":   arg(argNoSpecial, "omit pipes, sockets, and devices"),
 	}
-	a := map[actionKey]map[string]argHandler{
-		actNone: {
-			"":        arg(argSubcommand, "subcommand"),
-			"version": arg(argVersion, "show version and exit"),
-			// help is added in init to avoid circular initialization reference
-		},
+	a := map[string]map[string]argHandler{
 		actScan: {
-			"":        arg(argOneInput, "scan-input"),
 			"long":    arg(argLong, "show ownerships"),
 			"db":      arg(argDb, "write to specified database file"),
 			"cleanup": arg(argCleanup, "remove junk files"),
@@ -118,7 +107,6 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"top":     arg(argTop, "with repo: or repo:site, specific top-level directory"),
 		},
 		actDiff: {
-			"":               arg(argTwoInputs, "old-scan-input new-scan-input"),
 			"non-file-times": arg(argNonFileTimes, "show modification time changes in non-files"),
 			"no-ownerships":  arg(argNoOwnerships, "don't show ownership changes"),
 			"checks":         arg(argChecks, "include information about \"old\" version for checking"),
@@ -131,7 +119,7 @@ var argTables = func() map[actionKey]map[string]argHandler {
 		actPush: {
 			"top":     arg(argTop, "local repository top-level directory"),
 			"cleanup": arg(argCleanup, "remove junk files while scanning"),
-			"n":       arg(argNoOp, "don't modify the repository"),
+			"no-op":   arg(argNoOp, "don't modify the repository"),
 		},
 		actPull: {
 			"top":          arg(argTop, "local repository top-level directory"),
@@ -142,25 +130,22 @@ var argTables = func() map[actionKey]map[string]argHandler {
 			"top": arg(argTop, "local repository top-level directory"),
 		},
 		actSync: {
-			"":  arg(argTwoInputs, "source-path dest-path"),
-			"n": arg(argNoOp, "show changes without modifying destination"),
+			"no-op": arg(argNoOp, "show changes without modifying destination"),
 		},
 		actPushTimes: {
 			"top": arg(argTop, "local repository top-level directory"),
 		},
 		actListVersions: {
-			"":      arg(argOneInput, "path within repository"),
 			"top":   arg(argTop, "local repository top-level directory"),
 			"as-of": arg(argTimestamp, "ignore anything newer than specified timestamp"),
 			"long":  arg(argLong, "include S3 version identifiers"),
 		},
 		actGet: {
-			"":      arg(argTwoInputs, "repository-path local-path"),
 			"top":   arg(argTop, "local repository top-level directory"),
 			"as-of": arg(argTimestamp, "ignore anything newer than specified timestamp"),
 		},
 	}
-	for _, i := range []actionKey{actScan, actDiff, actSync, actListVersions, actGet} {
+	for _, i := range []string{actScan, actDiff, actSync, actListVersions, actGet} {
 		for arg, fn := range filterArgs {
 			a[i][arg] = fn
 		}
@@ -168,387 +153,223 @@ var argTables = func() map[actionKey]map[string]argHandler {
 	return a
 }()
 
-func init() {
-	// We have to plug argHelp in here to avoid a circular initialization reference.
-	argTables[actNone]["help"] = arg(argHelp, "show help and exit")
-}
-
-type subcommandHandler struct {
-	action actionKey
-	help   string
-}
-
-func subcommand(action actionKey, help string) subcommandHandler {
-	return subcommandHandler{
-		action: action,
-		help:   help,
+func (p *parser) subcommand(
+	rootCmd *cobra.Command,
+	name string,
+	positionalArgs string,
+	short string,
+	long string,
+	run func() error,
+) {
+	usage := name
+	args := cobra.NoArgs
+	if len(positionalArgs) > 0 {
+		usage += " " + positionalArgs
+		n := len(strings.Split(positionalArgs, " "))
+		args = argPositional(n, positionalArgs)
+	}
+	cmd := &cobra.Command{
+		Use:   usage,
+		Short: short,
+		Long:  long,
+		Args:  args,
+		RunE: func(_cmd *cobra.Command, _args []string) error {
+			return run()
+		},
+	}
+	rootCmd.AddCommand(cmd)
+	cmdArgs, ok := argTables[name]
+	if !ok {
+		panic("subcommand called on unknown action " + name)
+	}
+	for cmdArg, handler := range cmdArgs {
+		handler.fn(p, cmd, cmdArg, handler.help)
 	}
 }
 
-var subcommands = map[string]subcommandHandler{
-	"scan": subcommand(actScan, `
-Scan a directory, database, repository, or location in S3, applying all
-specified filters. scan-input may be one of
-
-* directory - a local directory
-* db - path to local qfs database
-* repo - the repository indicated by .qfs/repo
-* repo:$site - the repository copy of the database for site $site
-
-If -db is given, the result is written to the specified database.
-Otherwise, output is written to standard output.
-`),
-	"diff": subcommand(actDiff, `
-Compare two scan inputs, applying all specified filters.
-`),
-	"init-repo": subcommand(actInitRepo, `
-Initialize a repository.
-`),
-	"push": subcommand(actPush, `
-Push changes from the local site to the repository.
-`),
-	"pull": subcommand(actPull, `
-Pull changes from the repository to the local site.
-`),
-	"push-db": subcommand(actPushDb, `
-Regenerate the local site database and write it to the repository,
-overriding the repository's record of the local site's contents. This can
-be useful after restoring a site to replace outdated information in the
-repository.
-`),
-	"sync": subcommand(actSync, `
-Synchronize a destination directory with the contents of a source directory
-subject to the given filters. Similar in spirit to a local rsync using qfs
-filters.
-`),
-	"push-times": subcommand(actPushTimes, `
-List the timestamps of all known pushes.
-`),
-	"list-versions": subcommand(actListVersions, `
-List all the versions in the repository of all the files at or below a
-specified location.
-`),
-	"get": subcommand(actGet, `
-
-Retrieve files from the repository; useful for ad-hoc retrieval of files
-that are not included by the filter or recovering files that were changed
-locally and haven't been pushed.
-`),
-}
-
-func (p *parser) check() error {
-	switch p.action {
-	case actNone:
-		return fmt.Errorf("run %s --help for help", p.progName)
-	case actScan:
-		if p.input1 == "" {
-			return errors.New("scan requires an input")
-		}
-	case actDiff:
-		if p.input2 == "" {
-			return errors.New("diff requires two inputs")
-		}
-	case actInitRepo:
-	case actPush:
-	case actPull:
-	case actPushDb:
-	case actSync:
-		if p.input2 == "" {
-			return errors.New("sync requires two inputs")
-		}
-	case actPushTimes:
-	case actListVersions:
-		if p.input1 == "" {
-			return errors.New("list-versions requires a path")
-		}
-	case actGet:
-		if p.input2 == "" {
-			return errors.New("get requires a path and a save location")
-		}
+func (p *parser) preRun(_ *cobra.Command, args []string) error {
+	if len(args) >= 1 {
+		p.input1 = args[0]
+	}
+	if len(args) >= 2 {
+		p.input2 = args[1]
 	}
 	if p.noOp {
 		p.cleanup = false
 	}
+	if p.initMigrate {
+		if p.initCleanRepo {
+			return fmt.Errorf("only one init-repo mode option may be given")
+		}
+		p.initMode = repo.InitMigrate
+	} else if p.initCleanRepo {
+		p.initMode = repo.InitCleanRepo
+	}
+	if p.dynamicFilter != nil {
+		p.filters = append(p.filters, p.dynamicFilter)
+	}
 	return nil
 }
 
-func argHelp(p *parser, _ string) error {
-	fmt.Printf(`
-Usage:
-%s top-level-option
-OR
-%[1]s subcommand [options]
+func argTop(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().StringVar(&p.top, arg, "", help)
+}
 
-Top-level options:
-`,
-		p.progName,
-	)
-	keys := misc.SortedKeys(argTables[actNone])
-	for _, a := range keys {
-		if a == "" {
-			continue
-		}
-		fmt.Printf("  --%s: %s\n", a, argTables[actNone][a].help)
-	}
-	fmt.Printf("\nSubcommands:\n")
-	for s, sData := range subcommands {
-		args, ok := argTables[sData.action]
-		if !ok {
-			panic("no args for " + s)
-		}
-		pos, ok := args[""]
-		if ok {
-			fmt.Printf("\n%s %s {%s} [options]\n", p.progName, s, pos.help)
-		} else {
-			fmt.Printf("\n%s %s [options]\n", p.progName, s)
-		}
-		fmt.Println(sData.help)
-		keys = misc.SortedKeys(args)
-		fmt.Printf("%s options:\n", s)
-		for _, a := range keys {
-			if a == "" {
-				continue
+func argCleanRepo(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.initCleanRepo, arg, false, help)
+}
+
+func argMigrate(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.initMigrate, arg, false, help)
+}
+
+func argTimestamp(p *parser, cmd *cobra.Command, arg string, help string) {
+	v := newValidator("timestamp", func(timestamp string) error {
+		if epochRe.MatchString(timestamp) {
+			t, err := strconv.Atoi(timestamp)
+			if err != nil {
+				return fmt.Errorf("error parsing %s as epoch timestamp: %w", timestamp, err)
 			}
-			fmt.Printf("  --%s: %s\n", a, args[a].help)
-		}
-	}
-
-	os.Exit(0)
-	return nil
-}
-
-func argVersion(p *parser, _ string) error {
-	fmt.Printf("%s version %s\n", p.progName, Version)
-	os.Exit(0)
-	return nil
-}
-
-func argTop(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
-	p.top = p.args[p.arg]
-	p.arg++
-	return nil
-}
-
-func argCleanRepo(p *parser, _ string) error {
-	if p.initMode != repo.InitNormal {
-		return fmt.Errorf("only one init-repo mode option may be given")
-	}
-	p.initMode = repo.InitCleanRepo
-	return nil
-}
-
-func argMigrate(p *parser, _ string) error {
-	if p.initMode != repo.InitNormal {
-		return fmt.Errorf("only one init-repo mode option may be given")
-	}
-	p.initMode = repo.InitMigrate
-	return nil
-}
-
-func argTimestamp(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
-	timestamp := p.args[p.arg]
-	p.arg++
-	if epochRe.MatchString(timestamp) {
-		t, err := strconv.Atoi(timestamp)
-		if err != nil {
-			return fmt.Errorf("error parsing %s as epoch timestamp: %w", timestamp, err)
-		}
-		if len(timestamp) > 10 {
-			p.timestamp = time.UnixMilli(int64(t))
+			if len(timestamp) > 10 {
+				p.timestamp = time.UnixMilli(int64(t))
+			} else {
+				p.timestamp = time.Unix(int64(t), 0)
+			}
+		} else if dateRe.MatchString(timestamp) {
+			t, err := time.ParseInLocation(misc.DateFormat, timestamp, time.Local)
+			if err != nil {
+				return fmt.Errorf("error parsing %s as YYYY-MM-DD: %w", timestamp, err)
+			}
+			p.timestamp = t
+		} else if dateTimeRe.MatchString(timestamp) {
+			// Parse accepts optional milliseconds when omitted from the format.
+			t, err := time.ParseInLocation(misc.TimeFormatNoMs, timestamp, time.Local)
+			if err != nil {
+				return fmt.Errorf("error parsing %s as YYYY-MM-DD_hh:mm:ss[.sss]: %w", timestamp, err)
+			}
+			p.timestamp = t
 		} else {
-			p.timestamp = time.Unix(int64(t), 0)
+			return fmt.Errorf("timestamp must be epoch time (second or millisecond) or YYYY-MM-DD[_hh:mm:ss[.sss]]")
 		}
-	} else if dateRe.MatchString(timestamp) {
-		t, err := time.ParseInLocation(misc.DateFormat, timestamp, time.Local)
-		if err != nil {
-			return fmt.Errorf("error parsing %s as YYYY-MM-DD: %w", timestamp, err)
+		return nil
+	})
+	cmd.PersistentFlags().Var(v, arg, help)
+}
+
+func argFilesOnly(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVarP(&p.filesOnly, arg, "f", false, help)
+}
+
+func argNoSpecial(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.noSpecial, arg, false, help)
+}
+
+func argNonFileTimes(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.nonFileTimes, arg, false, help)
+}
+
+func argNoOwnerships(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.noOwnerships, arg, false, help)
+}
+
+func argChecks(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.checks, arg, false, help)
+}
+
+func argPositional(n int, description string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) < n {
+			return fmt.Errorf("%s must be specified", description)
+		} else if len(args) > n {
+			have := func() string {
+				if len(strings.Split(description, " ")) > 1 {
+					return "have"
+				} else {
+					return "has"
+				}
+			}()
+			return fmt.Errorf("%s %s already been specified", description, have)
 		}
-		p.timestamp = t
-	} else if dateTimeRe.MatchString(timestamp) {
-		// Parse accepts optional milliseconds when omitted from the format.
-		t, err := time.ParseInLocation(misc.TimeFormatNoMs, timestamp, time.Local)
-		if err != nil {
-			return fmt.Errorf("error parsing %s as YYYY-MM-DD_hh:mm:ss[.sss]: %w", timestamp, err)
-		}
-		p.timestamp = t
-	} else {
-		return fmt.Errorf("timestamp must be epoch time (second or millisecond) or YYYY-MM-DD[_hh:mm:ss[.sss]]")
+		return nil
 	}
-	return nil
 }
 
-func argSubcommand(p *parser, arg string) error {
-	if action, ok := subcommands[arg]; ok {
-		p.action = action.action
-	} else {
-		return fmt.Errorf("unknown subcommand \"%s\"", arg)
-	}
-	return nil
-}
-
-func argFilesOnly(p *parser, _ string) error {
-	p.filesOnly = true
-	return nil
-}
-
-func argNoSpecial(p *parser, _ string) error {
-	p.noSpecial = true
-	return nil
-}
-
-func argNonFileTimes(p *parser, _ string) error {
-	p.nonFileTimes = true
-	return nil
-}
-
-func argNoOwnerships(p *parser, _ string) error {
-	p.noOwnerships = true
-	return nil
-}
-
-func argChecks(p *parser, _ string) error {
-	p.checks = true
-	return nil
-}
-
-func argOneInput(p *parser, arg string) error {
-	if p.input1 != "" {
-		return fmt.Errorf("at argument \"%s\": an input has already been specified", arg)
-	}
-	p.input1 = arg
-	return nil
-}
-
-func argTwoInputs(p *parser, arg string) error {
-	if p.input2 != "" {
-		return fmt.Errorf("at argument \"%s\": inputs have already been specified", arg)
-	}
-	if p.input1 != "" {
-		p.input2 = arg
-	} else {
-		p.input1 = arg
-	}
-	return nil
-}
-
-func argDb(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
+func argDb(p *parser, cmd *cobra.Command, arg string, help string) {
 	// If specified multiple times, later overrides earlier.
-	p.db = p.args[p.arg]
-	p.arg++
-	return nil
+	cmd.PersistentFlags().StringVar(&p.db, arg, "", help)
 }
 
-func argLong(p *parser, _ string) error {
-	p.long = true
-	return nil
+func argLong(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.long, arg, false, help)
 }
 
-func argCleanup(p *parser, _ string) error {
-	p.cleanup = true
-	return nil
+func argCleanup(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.cleanup, arg, false, help)
 }
 
-func argNoOp(p *parser, _ string) error {
-	p.noOp = true
-	return nil
+func argNoOp(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVarP(&p.noOp, arg, "n", false, help)
 }
 
-func argLocalFilter(p *parser, _ string) error {
-	p.localFilter = true
-	return nil
+func argLocalFilter(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.localFilter, arg, false, help)
 }
 
-func argXDev(p *parser, _ string) error {
-	p.sameDev = true
-	return nil
+func argXDev(p *parser, cmd *cobra.Command, arg string, help string) {
+	cmd.PersistentFlags().BoolVar(&p.sameDev, arg, false, help)
 }
 
-func argFilter(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
-	pruneOnly := false
-	if arg == "filter-prune" {
-		pruneOnly = true
-	}
-	filename := p.args[p.arg]
-	p.arg++
-	f := filter.New()
-	err := f.ReadFile(fileinfo.NewPath(localsource.New(""), filename), pruneOnly)
-	if err != nil {
-		return err
-	}
-	p.filters = append(p.filters, f)
-	return nil
-}
-
-func argDynamicFilter(p *parser, arg string) error {
-	if p.arg >= len(p.args) {
-		return fmt.Errorf("%s requires an argument", arg)
-	}
-	parameter := p.args[p.arg]
-	p.arg++
-	f := p.dynamicFilter
-	if f == nil {
-		f = filter.New()
-	}
-	group := filter.NoGroup
-	switch arg {
-	case "include":
-		group = filter.Include
-	case "exclude":
-		group = filter.Exclude
-	case "prune":
-		group = filter.Prune
-	case "junk":
-		group = filter.Junk
-	default:
-		// TEST: NOT COVERED. Not possible unless we messed up statically creating the
-		// arg tables.
-		panic("argDynamicFilter called with invalid argument")
-	}
-	err := func() error {
-		if group == filter.Junk {
-			return f.SetJunk(parameter)
+func argFilter(p *parser, cmd *cobra.Command, arg string, help string) {
+	v := newValidator("filter-file", func(filename string) error {
+		pruneOnly := false
+		if arg == "filter-prune" {
+			pruneOnly = true
 		}
-		return f.ReadLine(group, parameter)
-	}()
-	if err != nil {
-		return err
-	}
-	p.dynamicFilter = f
-	return nil
+		f := filter.New()
+		err := f.ReadFile(fileinfo.NewPath(localsource.New(""), filename), pruneOnly)
+		if err != nil {
+			return err
+		}
+		p.filters = append(p.filters, f)
+		return nil
+	})
+	cmd.PersistentFlags().Var(v, arg, help)
 }
 
-func (p *parser) handleArg() error {
-	var opt string
-	arg := p.args[p.arg]
-	p.arg++
-	if strings.HasPrefix(arg, "--") {
-		opt = arg[2:]
-	} else if strings.HasPrefix(arg, "-") {
-		opt = arg[1:]
-	}
-	handler, ok := argTables[p.action][opt]
-	if !ok {
-		if opt == "" {
-			return fmt.Errorf("unexpected positional argument \"%s\"", arg)
+func argDynamicFilter(p *parser, cmd *cobra.Command, arg string, help string) {
+	v := newValidator("dynamic-filter", func(parameter string) error {
+		f := p.dynamicFilter
+		if f == nil {
+			f = filter.New()
 		}
-		return fmt.Errorf("unknown option \"%s\"", arg)
-	}
-	if opt == "" {
-		return handler.fn(p, arg)
-	}
-	return handler.fn(p, opt)
+		group := filter.NoGroup
+		switch arg {
+		case "include":
+			group = filter.Include
+		case "exclude":
+			group = filter.Exclude
+		case "prune":
+			group = filter.Prune
+		case "junk":
+			group = filter.Junk
+		default:
+			// TEST: NOT COVERED. Not possible unless we messed up statically creating the
+			// arg tables.
+			panic("argDynamicFilter called with invalid argument")
+		}
+		err := func() error {
+			if group == filter.Junk {
+				return f.SetJunk(parameter)
+			}
+			return f.ReadLine(group, parameter)
+		}()
+		if err != nil {
+			return err
+		}
+		p.dynamicFilter = f
+		return nil
+	})
+	cmd.PersistentFlags().Var(v, arg, help)
 }
 
 func (p *parser) doScan() error {
@@ -739,52 +560,136 @@ func (p *parser) doGet() error {
 	})
 }
 
-func Run(args []string) error {
-	if len(args) == 0 {
-		return errors.New("no arguments provided")
+func RunWithArgs(args []string) error {
+	os.Args = args
+	return Run()
+}
+
+func Run() error {
+	p := &parser{}
+	rootCmd := &cobra.Command{
+		Use:           filepath.Base(os.Args[0]),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Short:         "Manage flat databases of files",
+		Long: `qfs creates a flat-file database of the state of a directory the in
+the local file system. The state includes the output of lstat on the
+directory and all its contents. qfs has the following capabilities:
+
+* Generation of qfs _databases_ (which are efficient flat files) with
+  the optional application of filters
+* Comparison of live file systems or databases with each other to
+  generate a list of adds, removals, and changes between one file
+  system or another. You can compare two file systems, two databases,
+  or a file system and a database.
+* The concept of a repository and sites, implemented as a location in
+  Amazon S3 (or an API-compatible storage location) that serves as a
+  backup and allows synchronization
+* Synchronization: the ability to _push_ local changes to a repository
+  and to _pull_ changes from the repository with the local file system
+  with conflict detection, along with the ability to create local
+  backups or helper files for moving directly to a different site`,
+		Args:              cobra.NoArgs,
+		Version:           Version,
+		PersistentPreRunE: p.preRun,
 	}
-	p := &parser{
-		progName: filepath.Base(args[0]),
-		args:     args[1:],
-		arg:      0,
-		action:   actNone,
-	}
-	for p.arg < len(p.args) {
-		if err := p.handleArg(); err != nil {
-			return err
-		}
-	}
-	if err := p.check(); err != nil {
-		return err
-	}
-	if p.dynamicFilter != nil {
-		p.filters = append(p.filters, p.dynamicFilter)
-	}
-	switch p.action {
-	case actNone:
-		// TEST: NOT COVERED. Can't actually happen.
-		return fmt.Errorf("no action specified; use %s --help for help", p.progName)
-	case actScan:
-		return p.doScan()
-	case actDiff:
-		return p.doDiff()
-	case actInitRepo:
-		return p.doInitRepo()
-	case actPush:
-		return p.doPush()
-	case actPull:
-		return p.doPull()
-	case actPushDb:
-		return p.doPushDb()
-	case actSync:
-		return p.doSync()
-	case actPushTimes:
-		return p.doPushTimes()
-	case actListVersions:
-		return p.doListVersions()
-	case actGet:
-		return p.doGet()
-	}
-	// TEST: NOT COVERED (not reachable, but go 1.22 doesn't see it)
-	return nil
+
+	p.subcommand(
+		rootCmd,
+		actScan,
+		"scan-input",
+		"Scan a directory, database, or S3 location",
+		`Scan a directory, database, repository, or location in S3, applying all
+specified filters. scan-input may be one of
+
+* directory - a local directory
+* db - path to local qfs database
+* repo - the repository indicated by .qfs/repo
+* repo:$site - the repository copy of the database for site $site
+
+If -db is given, the result is written to the specified database.
+Otherwise, output is written to standard output.
+`,
+		p.doScan)
+	p.subcommand(
+		rootCmd,
+		actDiff,
+		"old-scan-input new-scan-input",
+		"Compare two scan inputs, applying all specified filters",
+		"",
+		p.doDiff)
+	p.subcommand(
+		rootCmd,
+		actInitRepo,
+		"",
+		"Initialize a repository",
+		"",
+		p.doInitRepo,
+	)
+	p.subcommand(
+		rootCmd,
+		actPush,
+		"",
+		"Push changes from the local site to the repository",
+		"",
+		p.doPush,
+	)
+	p.subcommand(
+		rootCmd,
+		actPull,
+		"",
+		"Pull changes from the repository to the local site",
+		"",
+		p.doPull,
+	)
+	p.subcommand(
+		rootCmd,
+		actPushDb,
+		"",
+		"Regenerate the local site database and write it to the repository",
+		`Regenerate the local site database and write it to the repository,
+overriding the repository's record of the local site's contents. This can
+be useful after restoring a site to replace outdated information in the
+repository.`,
+		p.doPushDb,
+	)
+	p.subcommand(
+		rootCmd,
+		actSync,
+		"source-path dest-path",
+		"Synchronize a destination with a source",
+		`Synchronize a destination directory with the contents of a source directory
+subject to the given filters. Similar in spirit to a local rsync using qfs
+filters.`,
+		p.doSync,
+	)
+	p.subcommand(
+		rootCmd,
+		actPushTimes,
+		"",
+		"List the timestamps of all known pushes",
+		"",
+		p.doPushTimes,
+	)
+	p.subcommand(
+		rootCmd,
+		actListVersions,
+		"path-within-repository",
+		"List versions of a file",
+		`List all the versions in the repository of all the files at or below a
+specified location.`,
+		p.doListVersions,
+	)
+	p.subcommand(
+		rootCmd,
+		actGet,
+		"repository-path local-path",
+		"Retrieve files from the repository",
+		`Retrieve files from the repository; useful for ad-hoc retrieval of files
+that are not included by the filter or recovering files that were changed
+locally and haven't been pushed.`,
+		p.doGet,
+	)
+
+	return rootCmd.Execute()
 }
