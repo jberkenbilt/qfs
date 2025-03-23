@@ -1,0 +1,5 @@
+:read:diff2-f1
+# Prune overrides include. Note that :exclude: here would not override
+# include because include takes precedence over exclude.
+:prune:
+.two

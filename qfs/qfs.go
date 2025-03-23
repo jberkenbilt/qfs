@@ -88,6 +88,9 @@ func arg(fn func(*parser, *cobra.Command, string, string), help string) argHandl
 }
 
 var argTables = func() map[string]map[string]argHandler {
+	// Note: some of the arg functions have hard-coded shortcuts. This arg table
+	// predates use of cobra. The code is implemented to allow arg functions to be
+	// conditional on the flag, but not all of them are.
 	var filterArgs = map[string]argHandler{
 		"filter":       arg(argFilter, "filter file"),
 		"filter-prune": arg(argFilter, "filter file -- read prune/junk only"),
@@ -296,7 +299,7 @@ func argPositional(n int, description string) cobra.PositionalArgs {
 
 func argDb(p *parser, cmd *cobra.Command, arg string, help string) {
 	// If specified multiple times, later overrides earlier.
-	cmd.PersistentFlags().StringVar(&p.db, arg, "", help)
+	cmd.PersistentFlags().StringVarP(&p.db, arg, "d", "", help)
 }
 
 func argLong(p *parser, cmd *cobra.Command, arg string, help string) {

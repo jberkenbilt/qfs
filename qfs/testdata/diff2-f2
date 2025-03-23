@@ -1,0 +1,4 @@
+:read:diff2-f1
+# :exclude: does not override an explicit :include: in f1, but :prune: does.
+:exclude:
+.two

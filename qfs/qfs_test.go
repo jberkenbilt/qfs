@@ -488,6 +488,56 @@ func TestDiff(t *testing.T) {
 	)
 }
 
+func TestDiff2(t *testing.T) {
+	// This test was crafted around a specific area of confusion. The file `.two`
+	// differs, but a prune overrides an include. An exclude would not override an
+	// include.
+	testutil.CheckLines(
+		t,
+		[]string{
+			"qfs",
+			"diff",
+			"testdata/diff2a",
+			"testdata/diff2b",
+			"--filter",
+			"testdata/diff2-f1",
+		},
+		[]string{
+			"change .four",
+			"change .two",
+		},
+	)
+	testutil.CheckLines(
+		t,
+		[]string{
+			"qfs",
+			"diff",
+			"testdata/diff2a",
+			"testdata/diff2b",
+			"--filter",
+			"testdata/diff2-f2",
+		},
+		[]string{
+			"change .four",
+			"change .two",
+		},
+	)
+	testutil.CheckLines(
+		t,
+		[]string{
+			"qfs",
+			"diff",
+			"testdata/diff2a",
+			"testdata/diff2b",
+			"--filter",
+			"testdata/diff2-f3",
+		},
+		[]string{
+			"change .four",
+		},
+	)
+}
+
 func TestCLI(t *testing.T) {
 	checkCli := func(cmd []string, expErr string) {
 		t.Helper()
