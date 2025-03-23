@@ -24,6 +24,16 @@ type Lister struct {
 	s3Client s3.ListObjectsV2APIClient
 }
 
+// WithoutChecksumWarnings can be passed as an options function when creating an
+// S3 client. Starting in December 2024, all uploaded objects get checksums. When
+// objects uploaded prior to that, if those objects don't have checksums, the SDK
+// gives a warning. This suppresses the warning when the validation is checked
+// because of lack of checksums. Without this, we get a warning on every
+// GetObject from an older upload.
+func WithoutChecksumWarnings(options *s3.Options) {
+	options.DisableLogOutputChecksumValidationSkipped = true
+}
+
 func New(options ...Options) (*Lister, error) {
 	l := &Lister{}
 	for _, fn := range options {
@@ -40,7 +50,7 @@ func New(options ...Options) (*Lister, error) {
 		if err != nil {
 			return nil, err
 		}
-		l.s3Client = s3.NewFromConfig(cfg)
+		l.s3Client = s3.NewFromConfig(cfg, WithoutChecksumWarnings)
 	}
 	return l, nil
 }

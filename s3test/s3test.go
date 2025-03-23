@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"net"
 	"os"
@@ -185,6 +186,7 @@ export AWS_DEFAULT_REGION=us-east-1
 			options.BaseEndpoint = &s.endpoint
 			options.UsePathStyle = true
 		},
+		s3lister.WithoutChecksumWarnings,
 	)
 
 	return started, nil

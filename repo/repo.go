@@ -16,6 +16,7 @@ import (
 	"github.com/jberkenbilt/qfs/localsource"
 	"github.com/jberkenbilt/qfs/misc"
 	"github.com/jberkenbilt/qfs/repofiles"
+	"github.com/jberkenbilt/qfs/s3lister"
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/sync"
 	"github.com/jberkenbilt/qfs/traverse"
@@ -127,7 +128,7 @@ func New(options ...Options) (*Repo, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.s3Client = s3.NewFromConfig(cfg)
+		r.s3Client = s3.NewFromConfig(cfg, s3lister.WithoutChecksumWarnings)
 	}
 	return r, nil
 }
