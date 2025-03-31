@@ -509,7 +509,7 @@ from this site or other sites.
 
 Run `qfs push`. This does the following:
 * If `.qfs/busy` exists in the repository, stop and tell the user to repair the database with `qfs
-  init-db`.
+  init-repo`.
 * Regenerate the local database as `.qfs/db/$site`, applying only prune (and junk) directives from
   the repository and site filters, omitting special files, and automatically handling `.qfs` subject
   to the rules above. Using only prune entries makes the site database more useful and also improves
@@ -566,7 +566,7 @@ other sites.
 
 Run `qfs pull`. This does the following:
 * If `.qfs/busy` exists in the repository, stop and tell the user to repair the database with `qfs
-  init-db`.
+  init-repo`.
 * Get the current site from `.qfs/site`
 * Download the repository's copy of its own database to `.qfs/db/repo.tmp`
 * Read the repository's copy of the current site's database into memory, and diff it against the
