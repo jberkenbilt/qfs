@@ -60,7 +60,7 @@ type parser struct {
 // the option's entry is called. Otherwise, the `""` entry is called for
 // positional options.
 
-const Version = "0.2.0"
+const Version = "0.2.1"
 
 type argHandler struct {
 	fn   func(*parser, *cobra.Command, string, string)
