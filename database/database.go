@@ -116,13 +116,14 @@ func (ld *Loader) readHeader() error {
 		return err
 	}
 	header := string(first)
-	if header == "QFS 1" {
+	switch header {
+	case "QFS 1":
 		ld.format = DbQfs
-	} else if header == "QFS REPO 1" {
+	case "QFS REPO 1":
 		ld.format = DbRepo
-	} else if header == "SYNC_TOOLS_DB_VERSION 3" {
+	case "SYNC_TOOLS_DB_VERSION 3":
 		ld.format = DbQSync
-	} else {
+	default:
 		return fmt.Errorf("%s is not a qfs database", ld.path.Path())
 	}
 	return nil
@@ -275,18 +276,19 @@ func (ld *Loader) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 	fileType := fileinfo.TypeUnknown
 	var size int64
 	special := fields[7]
-	if fType == 0o140000 {
+	switch fType {
+	case 0o140000:
 		fileType = fileinfo.TypeSocket
-	} else if fType == 0o120000 {
+	case 0o120000:
 		fileType = fileinfo.TypeLink
-	} else if fType == 0o100000 {
+	case 0o100000:
 		fileType = fileinfo.TypeFile
 		t, _ := strconv.Atoi(fields[2])
 		size = int64(t)
-	} else if fType == 0o060000 {
+	case 0o060000:
 		fileType = fileinfo.TypeBlockDev
 		special = strings.TrimPrefix(special, "b,")
-	} else if fType == 0o040000 {
+	case 0o040000:
 		fileType = fileinfo.TypeDirectory
 		if special == "-1" {
 			// qsync used this for pruned directories; qfs ignores them, so ignore for
@@ -294,10 +296,10 @@ func (ld *Loader) handleQSync(fields []string) (*fileinfo.FileInfo, error) {
 			return nil, nil
 		}
 		special = ""
-	} else if fType == 0o020000 {
+	case 0o020000:
 		fileType = fileinfo.TypeCharDev
 		special = strings.TrimPrefix(special, "c,")
-	} else if fType == 0o010000 {
+	case 0o010000:
 		fileType = fileinfo.TypePipe
 	}
 	uid, _ := strconv.Atoi(fields[4])
@@ -488,9 +490,10 @@ func (db Database) Print(long bool) error {
 			fmt.Printf(" %05d %05d", f.Uid, f.Gid)
 		}
 		fmt.Printf(" %s %s", misc.FormatTime(f.ModTime), f.Path)
-		if f.FileType == fileinfo.TypeLink {
+		switch f.FileType {
+		case fileinfo.TypeLink:
 			fmt.Printf(" -> %s", f.Special)
-		} else if f.FileType == fileinfo.TypeBlockDev || f.FileType == fileinfo.TypeCharDev {
+		case fileinfo.TypeBlockDev, fileinfo.TypeCharDev:
 			fmt.Printf(" %s", f.Special)
 		}
 		fmt.Println("")

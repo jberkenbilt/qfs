@@ -65,7 +65,8 @@ func (tr *Traverser) getNode(node *treeNode) error {
 	}
 	ft := node.info.FileType
 	isSpecial := !(ft == fileinfo.TypeFile || ft == fileinfo.TypeDirectory || ft == fileinfo.TypeLink)
-	if ft == fileinfo.TypeFile {
+	switch ft {
+	case fileinfo.TypeFile:
 		if group == filter.Junk && tr.cleanup {
 			node.included = false
 			if err = tr.root.Join(node.path).Remove(); err != nil {
@@ -74,7 +75,7 @@ func (tr *Traverser) getNode(node *treeNode) error {
 				tr.notifyChan <- fmt.Sprintf("removing %s", node.path)
 			}
 		}
-	} else if ft == fileinfo.TypeDirectory {
+	case fileinfo.TypeDirectory:
 		skip := false
 		if !included && group == filter.Prune {
 			// Don't traverse into pruned directories

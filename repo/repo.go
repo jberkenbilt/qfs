@@ -358,12 +358,13 @@ func (r *Repo) Init(mode InitMode) error {
 		// TEST: NOT COVERED
 		return err
 	}
-	if mode == InitCleanRepo {
+	switch mode {
+	case InitCleanRepo:
 		err = r.cleanRepo()
 		if err != nil {
 			return err
 		}
-	} else if mode == InitMigrate {
+	case InitMigrate:
 		err = r.migrateRepo()
 		if err != nil {
 			return err

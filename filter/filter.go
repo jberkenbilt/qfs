@@ -268,11 +268,12 @@ func IsIncluded(
 func (f *Filter) ReadLine(group Group, line string) error {
 	switch {
 	case line == ".":
-		if group == Exclude {
+		switch group {
+		case Exclude:
 			f.SetDefaultInclude(false)
-		} else if group == Include {
+		case Include:
 			f.SetDefaultInclude(true)
-		} else {
+		default:
 			return errors.New("default path directive only allowed in include or exclude")
 		}
 	case strings.HasPrefix(line, prefixRe):

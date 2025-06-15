@@ -324,10 +324,7 @@ func argXDev(p *parser, cmd *cobra.Command, arg string, help string) {
 
 func argFilter(p *parser, cmd *cobra.Command, arg string, help string) {
 	v := newValidator("filter-file", func(filename string) error {
-		pruneOnly := false
-		if arg == "filter-prune" {
-			pruneOnly = true
-		}
+		pruneOnly := arg == "filter-prune"
 		f := filter.New()
 		err := f.ReadFile(fileinfo.NewPath(localsource.New(""), filename), pruneOnly)
 		if err != nil {
