@@ -99,7 +99,7 @@ func (s *S3Source) KeyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 	if m == nil {
 		return nil
 	}
-	base := strings.Replace(m[1], "@@", "@", -1)
+	base := strings.ReplaceAll(m[1], "@@", "@")
 	modTimeMs, err := strconv.ParseInt(m[3], 10, 64)
 	if err != nil {
 		// modTime is invalid
@@ -118,7 +118,7 @@ func (s *S3Source) KeyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 		}
 		permissions, _ = strconv.ParseInt(rest, 8, 16)
 	} else {
-		special = strings.Replace(rest, "@@", "@", -1)
+		special = strings.ReplaceAll(rest, "@@", "@")
 		permissions = 0o777
 	}
 	return &fileinfo.FileInfo{
@@ -190,11 +190,11 @@ func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo) string {
 	if key != "" {
 		key += "/"
 	}
-	key += strings.Replace(path, "@", "@@", -1) + "@"
+	key += strings.ReplaceAll(path, "@", "@@") + "@"
 	if fi != nil {
 		var rest string
 		if fi.FileType == fileinfo.TypeLink {
-			rest = strings.Replace(fi.Special, "@", "@@", -1)
+			rest = strings.ReplaceAll(fi.Special, "@", "@@")
 		} else {
 			rest = fmt.Sprintf("%04o", fi.Permissions)
 		}

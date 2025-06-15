@@ -456,7 +456,7 @@ func WriteDb(filename string, files Database, format DbFormat) error {
 		if same > 0 {
 			sameStr = fmt.Sprintf("/%d", same)
 		}
-		_, err := w.WriteString(fmt.Sprintf("%d%s\x00%s\n", len(line)-same, sameStr, line[same:]))
+		_, err := fmt.Fprintf(w, "%d%s\x00%s\n", len(line)-same, sameStr, line[same:])
 		if err != nil {
 			// TEST: NOT COVERED
 			return err

@@ -116,7 +116,7 @@ func TestRun(t *testing.T) {
 		objects[2], // "three"
 	}
 	if !slices.EqualFunc(received, exp, func(o1 types.Object, o2 types.Object) bool {
-		return *o1.Key == *o2.Key && o1.Size == o2.Size && *o1.LastModified == *o2.LastModified
+		return *o1.Key == *o2.Key && o1.Size == o2.Size && o1.LastModified.Equal(*o2.LastModified)
 	}) {
 		t.Error("got wrong results")
 		for _, o := range received {
