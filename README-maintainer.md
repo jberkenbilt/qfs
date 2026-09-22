@@ -24,5 +24,4 @@ git push qfs v$version
 
 # Cobra/layout
 
-The `start-minio` command is in `start-minio`. It has its own main. The `cmd` directory is the `cmd`
-package used by [cobra](https://github.com/spf13/cobra/).
+The `start-test-s3` command is in `start-test-s3`. It has its own main. The `cmd` directory is the `cmd` package used by [cobra](https://github.com/spf13/cobra/).

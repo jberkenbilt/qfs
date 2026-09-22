@@ -16,9 +16,7 @@ jobs:
       matrix:
         platform:
           - os: ubuntu-latest
-            install: ''
           - os: macos-latest
-            install: '--install-minio'
     runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@v7
@@ -28,4 +26,4 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
       - name: Test
-        run: ./test_all ${{ matrix.platform.install }}
+        run: ./test_all

@@ -2,10 +2,13 @@
 set -eo pipefail
 cd $(dirname $0)
 
-# For CI on mac
-if [[ "$1" == "--install-minio" ]]; then
-    shift
-    brew install minio/stable/minio minio/stable/mc
+# Install SeaweedFS
+if ! weed version >/dev/null 2>&1; then
+    rm -f install.sh
+    wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/install.sh
+    bash install.sh --dir ~/.local/bin
+    PATH=~/.local/bin:$PATH
+    rm -f install.sh
 fi
 
 rm -rf coverage

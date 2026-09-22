@@ -34,6 +34,16 @@ func WithoutChecksumWarnings(options *s3.Options) {
 	options.DisableLogOutputChecksumValidationSkipped = true
 }
 
+// WithPathStyleForCustomEndpoint enables path-style S3 addressing
+// when a custom endpoint (AWS_ENDPOINT_URL) is configured. Most
+// non-AWS S3-compatible servers require path-style addressing; real
+// AWS S3 uses the SDK's default virtual-hosted style.
+func WithPathStyleForCustomEndpoint(options *s3.Options) {
+	if _, ok := os.LookupEnv("AWS_ENDPOINT_URL"); ok {
+		options.UsePathStyle = true
+	}
+}
+
 func New(options ...Options) (*Lister, error) {
 	l := &Lister{}
 	for _, fn := range options {
@@ -50,7 +60,8 @@ func New(options ...Options) (*Lister, error) {
 		if err != nil {
 			return nil, err
 		}
-		l.s3Client = s3.NewFromConfig(cfg, WithoutChecksumWarnings)
+		l.s3Client = s3.NewFromConfig(
+			cfg, WithoutChecksumWarnings, WithPathStyleForCustomEndpoint)
 	}
 	return l, nil
 }

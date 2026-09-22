@@ -33,8 +33,7 @@ import (
 )
 
 const (
-	TestContainer = "qfs-test-minio"
-	TestBucket    = "qfs-test-repo"
+	TestBucket = "qfs-test-repo"
 )
 
 var testS3 struct {
@@ -44,8 +43,8 @@ var testS3 struct {
 var s3Client *s3.Client
 var ctx = context.Background()
 
-func startMinio() {
-	s, err := s3test.New(TestContainer)
+func startTestS3() {
+	s, err := s3test.New()
 	if err != nil {
 		panic(err.Error())
 	}
@@ -53,40 +52,33 @@ func startMinio() {
 	if err != nil {
 		panic(err.Error())
 	}
-	if started {
-		fmt.Println("Run ./bin/start-minio to speed testing and persist state after test.")
-		err = s.Init()
-		if err != nil {
-			_ = testS3.s3.Stop()
-			panic(err.Error())
-		}
-	}
+	s.SetEnvironmentVariables()
 	testS3.started = started
 	testS3.s3 = s
 	s3Client = s.Client()
 }
 
 func TestMain(m *testing.M) {
-	startMinio()
+	startTestS3()
 	status := m.Run()
 	if testS3.started {
 		err := testS3.s3.Stop()
 		if err != nil {
-			fmt.Printf("WARNING: errors stopping containers: %v", err)
+			fmt.Printf("WARNING: errors stopping s3 test server: %v", err)
 		}
 	}
 	os.Exit(status)
 }
 
-func TestStartMinio(t *testing.T) {
-	// This is mainly for coverage. The test container is started by setup/tear-down.
-	// This exercises that it is already started.
-	s, err := s3test.New(TestContainer)
+func TestStartS3Test(t *testing.T) {
+	// The test server is started by setup/tear-down. This exercises
+	// that we can detect when it's already running.
+	s, err := s3test.New()
 	testutil.Check(t, err)
 	started, err := s.Start()
 	testutil.Check(t, err)
 	if started {
-		t.Errorf("test container should already be running")
+		t.Errorf("test server should already be running")
 	}
 }
 
@@ -1226,6 +1218,12 @@ add dir2/link-to-remove
 		t.Fatalf("can't find time in %s", lvOut1)
 	}
 	pushTime1 := string(m[1])
+
+	// Some S3-compatible servers (e.g. SeaweedFS) only report object LastModified
+	// with 1-second resolution. Make sure enough time passes that every push from
+	// here on gets a version timestamp distinguishable from pushTime1, which the
+	// as-of checks later in this test depend on.
+	time.Sleep(1100 * time.Millisecond)
 
 	// Check also with push-times.
 	ptOut, _ := testutil.WithStdout(func() {

@@ -128,7 +128,8 @@ func New(options ...Options) (*Repo, error) {
 		if err != nil {
 			return nil, err
 		}
-		r.s3Client = s3.NewFromConfig(cfg, s3lister.WithoutChecksumWarnings)
+		r.s3Client = s3.NewFromConfig(
+			cfg, s3lister.WithoutChecksumWarnings, s3lister.WithPathStyleForCustomEndpoint)
 	}
 	return r, nil
 }

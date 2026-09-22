@@ -7,27 +7,21 @@ import (
 	"path/filepath"
 )
 
-func run(containerName string) error {
-	s, err := s3test.New(containerName)
+func run() error {
+	s, err := s3test.New()
 	if err != nil {
 		return err
 	}
-	started, err := s.Start()
+	_, err = s.Start()
 	if err != nil {
 		return err
-	}
-	if started {
-		err = s.Init()
-		if err != nil {
-			return fmt.Errorf("init: %w", err)
-		}
 	}
 	fmt.Print(s.Env())
 	return nil
 }
 
 func main() {
-	if err := run("qfs-test-minio"); err != nil {
+	if err := run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", filepath.Base(os.Args[0]), err)
 	}
 }
