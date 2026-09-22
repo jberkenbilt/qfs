@@ -2,6 +2,9 @@
 
 Last full review: 2024-06-10
 
+*NOTE*: as of 0.2.2, there are known limitations with some file-system-backed S3 API-compatible
+backends because of qfs's key naming conventions. See [Known Issues](#known-issues) for details.
+
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
 the local file system. The state includes the output of _lstat_ on the directory and all its
 contents. `qfs` includes the following capabilities:
@@ -89,6 +92,23 @@ telling you what changed.
   * Without implicit descendant inclusion, this would cause removal of directories that contain
     included files but are not themselves included.
 * At present, pulling contents into read-only directories will not work.
+* Some S3-compatible servers store keys on the file system, which may cause the following problems
+  (see below for a proposed fix):
+  * If a symbolic link target contains `/../`, this may be rejected. Other patterns, like `//` can
+    cause problems.
+  * Too many characters between `/` characters may cause problems
+  * Link targets may may create keys such that `prefix` and `prefix/extra` are both present, which
+    would make some backends try to create `prefix` as both a file and a directory.
+
+## Planned Non-compatible Change
+
+* *In symlink targets*, quote `/` as `@/`. This solves some of the problems listed in the
+  file-system-backed S3 server comments above. When qfs lists keys, it would have to accept `@/`, as
+  well as `@@` as a quoted character. We should accept `@[\W]` as quoted. Newer qfs would read older
+  keys as they are today but would write keys that would work on a file-system-backed server. Older
+  qfs would ignore those keys, which could cause files to be deleted locally (but still present in
+  the repo), so it would be unsafe for an older qfs to read repos that were written by a newer qfs.
+  It would be best if we can trap that by storing some kind of qfs min version in the repo.
 
 # CLI
 
