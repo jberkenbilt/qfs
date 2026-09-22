@@ -2,6 +2,7 @@
 package qfs
 
 import (
+	"maps"
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -149,9 +150,7 @@ var argTables = func() map[string]map[string]argHandler {
 		},
 	}
 	for _, i := range []string{actScan, actDiff, actSync, actListVersions, actGet} {
-		for arg, fn := range filterArgs {
-			a[i][arg] = fn
-		}
+		maps.Copy(a[i], filterArgs)
 	}
 	return a
 }()

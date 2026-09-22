@@ -136,7 +136,6 @@ func (s *S3Test) serverStart() (bool, error) {
 			"env",
 			"AWS_ACCESS_KEY_ID="+accessKey,
 			"AWS_SECRET_ACCESS_KEY="+secretKey,
-			"S3_BUCKET=qfs-default-bucket",
 			"weed",
 			"mini",
 			fmt.Sprintf("-s3.port=%d", s3Port),
