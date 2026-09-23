@@ -195,6 +195,7 @@ func TestS3Source(t *testing.T) {
 		"file1",
 		"file2",
 		"file3",
+		"file4",
 	} {
 		err = src.Store(j("files/"+f), f)
 		if err != nil {
@@ -331,7 +332,7 @@ func TestS3Source(t *testing.T) {
 		t.Errorf("still there")
 	}
 	if _, ok := mem1["dir1/potato"]; !ok {
-		t.Errorf("descendents are missing")
+		t.Errorf("descendants are missing")
 	}
 
 	// Exercise retrieval
@@ -384,7 +385,7 @@ func TestS3Source(t *testing.T) {
 	// Exercise pure s3 scan
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
-	fileRe := regexp.MustCompile(`^(.+)@(.*?)$`)
+	fileRe := regexp.MustCompile(`^(.+?)@(.*)$`)
 	testutil.CheckLinesSorted(
 		t,
 		func(s string) string {
@@ -402,6 +403,7 @@ func TestS3Source(t *testing.T) {
 			"home/dir1/salad",
 			"home/file2",
 			"home/file3",
+			"home/file4",
 			"home/repo-db",
 		},
 	)
@@ -419,6 +421,15 @@ func TestKeyLogic(t *testing.T) {
 		"potato-salad",
 		"potato/.@f,1715443000777,0644",
 		"potato/a@@b@l,1715443000777,target@@here",
+		// Version 0.3.0 started quoting `/` in link targets to
+		// accommodate `/../` in a target, which is rejected by some
+		// S3 API-compatible clients that store keys in the file
+		// system.
+		"potato/c@@d@l,1715443000888,..@/..@/target@@there",
+		// If the target doesn't quote the `/`, we can still read it.
+		// This would happen for links stored with an older version of
+		// qfs. Older can't read newer, but newer can read older.
+		"potato/e@@f@l,1715443000889,uses/unquoted/slash",
 	} {
 		input.Key = &k
 		_, err := s3Client.PutObject(ctx, input)
@@ -453,6 +464,18 @@ func TestKeyLogic(t *testing.T) {
 			ModTime:     time.UnixMilli(1715443000777),
 			Permissions: 0o777,
 			Special:     "target@here",
+		},
+		"potato/c@d": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000888),
+			Permissions: 0o777,
+			Special:     "../../target@there",
+		},
+		"potato/e@f": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000889),
+			Permissions: 0o777,
+			Special:     "uses/unquoted/slash",
 		},
 	}
 	sort.Strings(expExtra)

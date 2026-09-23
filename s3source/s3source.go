@@ -30,7 +30,9 @@ import (
 // the test suite to exercise the batching logic.
 var DeleteBatchSize = 1000
 
-var pathRe = regexp.MustCompile(`^((?:[^@]|@@)+)@([fdl]),(\d+),((?:[^@]|@@)+)$`)
+var pathRe = regexp.MustCompile(`^((?:[^@]|@@)+)@([fdl]),(\d+),((?:[^@]|@\W)+)$`)
+var atRe = regexp.MustCompile(`@(\W)`)
+var specRe = regexp.MustCompile(`[@/]`)
 var permRe = regexp.MustCompile(`^[0-7]{4}$`)
 var ctx = context.Background()
 
@@ -118,7 +120,7 @@ func (s *S3Source) KeyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 		}
 		permissions, _ = strconv.ParseInt(rest, 8, 16)
 	} else {
-		special = strings.ReplaceAll(rest, "@@", "@")
+		special = atRe.ReplaceAllString(rest, "$1")
 		permissions = 0o777
 	}
 	return &fileinfo.FileInfo{
@@ -194,7 +196,7 @@ func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo) string {
 	if fi != nil {
 		var rest string
 		if fi.FileType == fileinfo.TypeLink {
-			rest = strings.ReplaceAll(fi.Special, "@", "@@")
+			rest = specRe.ReplaceAllString(fi.Special, "@$0")
 		} else {
 			rest = fmt.Sprintf("%04o", fi.Permissions)
 		}
