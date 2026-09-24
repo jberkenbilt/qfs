@@ -32,9 +32,9 @@ import (
 	"time"
 )
 
-const (
-	TestBucket = "qfs-test-repo"
-)
+var testBucket = func() string {
+	return fmt.Sprintf("qfs-test-repo-%d", time.Now().UnixMilli())
+}()
 
 var testS3 struct {
 	s3      *s3test.S3Test
@@ -67,6 +67,11 @@ func TestMain(m *testing.M) {
 			fmt.Printf("WARNING: errors stopping s3 test server: %v", err)
 		}
 	}
+	if status == 0 {
+		if _, ok := os.LookupEnv("QFS_TEST_KEEP_BUCKET"); !ok {
+			deleteTestBucket()
+		}
+	}
 	os.Exit(status)
 }
 
@@ -84,7 +89,7 @@ func TestStartS3Test(t *testing.T) {
 
 func deleteTestBucket() {
 	i1 := &s3.ListObjectVersionsInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 	}
 	p := s3.NewListObjectVersionsPaginator(s3Client, i1)
 	for p.HasMorePages() {
@@ -107,7 +112,7 @@ func deleteTestBucket() {
 		}
 		if len(objects) > 0 {
 			i2 := &s3.DeleteObjectsInput{
-				Bucket: aws.String(TestBucket),
+				Bucket: aws.String(testBucket),
 				Delete: &types.Delete{
 					Objects: objects,
 				},
@@ -119,7 +124,7 @@ func deleteTestBucket() {
 		}
 	}
 	i3 := &s3.DeleteBucketInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 	}
 	_, err := s3Client.DeleteBucket(ctx, i3)
 	if err != nil {
@@ -130,14 +135,14 @@ func deleteTestBucket() {
 func setUpTestBucket() {
 	deleteTestBucket()
 	i1 := &s3.CreateBucketInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 	}
 	_, err := s3Client.CreateBucket(ctx, i1)
 	if err != nil {
 		panic(err.Error())
 	}
 	i2 := &s3.PutBucketVersioningInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 		VersioningConfiguration: &types.VersioningConfiguration{
 			Status: types.BucketVersioningStatusEnabled,
 		},
@@ -176,7 +181,7 @@ func TestS3Source(t *testing.T) {
 	makeSrc := func(db database.Database) *s3source.S3Source {
 		t.Helper()
 		src, err := s3source.New(
-			TestBucket,
+			testBucket,
 			"home",
 			s3source.WithS3Client(s3Client),
 			s3source.WithDatabase(db),
@@ -288,7 +293,7 @@ func TestS3Source(t *testing.T) {
 	}
 
 	_, err = src.Open("nope")
-	if err == nil || !strings.Contains(err.Error(), "s3://qfs-test-repo/home/nope@...:") {
+	if err == nil || !strings.Contains(err.Error(), "s3://"+testBucket+"/home/nope@...:") {
 		t.Errorf("wrong error: %v", err)
 	}
 	rd, err := src.Open("dir1/potato")
@@ -395,7 +400,7 @@ func TestS3Source(t *testing.T) {
 			}
 			return m[1]
 		},
-		[]string{"qfs", "scan", "s3://" + TestBucket},
+		[]string{"qfs", "scan", "s3://" + testBucket},
 		[]string{
 			"home/.",
 			"home/dir1/empty-directory",
@@ -412,7 +417,7 @@ func TestS3Source(t *testing.T) {
 func TestKeyLogic(t *testing.T) {
 	setUpTestBucket()
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 	}
 	for _, k := range []string{
 		".@d,1715443064999,0755",
@@ -436,7 +441,7 @@ func TestKeyLogic(t *testing.T) {
 		testutil.Check(t, err)
 	}
 	src, err := s3source.New(
-		TestBucket,
+		testBucket,
 		"",
 		s3source.WithS3Client(s3Client),
 	)
@@ -548,13 +553,13 @@ func TestMigrate(t *testing.T) {
 	now := time.Now().UnixMilli()
 	before := int64(1715856724523) // some time in the past
 	after := now + 3600000
-	writeFile(t, j(".qfs/repo"), now, 0o644, "s3://"+TestBucket+"/repo")
+	writeFile(t, j(".qfs/repo"), now, 0o644, "s3://"+testBucket+"/repo")
 	writeFile(t, j("one/in-sync"), before, 0o644, "")
 	writeFile(t, j("two/also-in-sync"), before, 0o444, "")
 	writeFile(t, j("one/out-of-date"), after, 0o664, "")
 	testutil.Check(t, os.Symlink("one", j("link")))
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 	}
 	for _, path := range []string{"one/in-sync", "one/out-of-date", "two/also-in-sync"} {
 		input.Key = aws.String("repo/" + path)
@@ -713,7 +718,7 @@ func TestLifecycle(t *testing.T) {
 	// Initialize a repository normally
 
 	// No newline on repo file
-	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+TestBucket+"/home")
+	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+testBucket+"/home")
 	qfs.S3Client = s3Client
 	defer func() { qfs.S3Client = nil }()
 	err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
@@ -982,7 +987,7 @@ prompt: Continue?
 
 	// Site up a second site, and do a series of pull. For the first pull, there is no filter in the
 	// repository, so we just get filters. This time, write newlines in the repo and site files.
-	writeFile(t, j("site2/.qfs/repo"), start, 0o644, "s3://"+TestBucket+"/home\n")
+	writeFile(t, j("site2/.qfs/repo"), start, 0o644, "s3://"+testBucket+"/home\n")
 	writeFile(t, j("site2/.qfs/site"), start, 0o644, "site2\n")
 	// Run a pull but answer no to the continue prompt.
 	testutil.ExpStdout(
@@ -1985,7 +1990,7 @@ prompt: Conflicts detected. Exit?
 
 	// Push with busy file
 	putInput := &s3.PutObjectInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String("home/.qfs/busy"),
 		Body:   bytes.NewReader([]byte{}),
 	}
@@ -2004,7 +2009,7 @@ prompt: Conflicts detected. Exit?
 	)
 	checkMessages(t, []string{"downloading latest repository database"})
 	deleteInput := &s3.DeleteObjectInput{
-		Bucket: aws.String(TestBucket),
+		Bucket: aws.String(testBucket),
 		Key:    aws.String("home/.qfs/busy"),
 	}
 	_, err = s3Client.DeleteObject(ctx, deleteInput)
