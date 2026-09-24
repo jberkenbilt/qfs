@@ -4,22 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/jberkenbilt/qfs/s3lister"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jberkenbilt/qfs/s3lister"
 )
 
 const (
 	accessKey  = "qfs_demo_access_key"
 	secretKey  = "qfs_demo_long_enough_secret_key"
 	testRegion = "us-east-1"
+	noEndpoint = "-none-"
 )
 
 type EnvVar struct {
@@ -57,6 +60,9 @@ func unusedPort() int {
 // server is not found, the URL is returned as the empty string.
 func (s *S3Test) Running() (endpointUrl string, err error) {
 	var ok bool
+	if _, ok = os.LookupEnv("QFS_TEST_REAL_S3"); ok {
+		return noEndpoint, nil
+	}
 	endpointUrl, ok = os.LookupEnv("AWS_ENDPOINT_URL")
 	if !ok {
 		return "", nil
@@ -82,21 +88,28 @@ func (s *S3Test) Start() (bool, error) {
 		return false, err
 	}
 	s.SetEnvironmentVariables()
-	cfg, err := config.LoadDefaultConfig(
-		context.Background(),
-		config.WithRegion(testRegion),
-		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
-		),
-	)
+	var cfg aws.Config
+	if s.endpoint == noEndpoint {
+		cfg, err = config.LoadDefaultConfig(context.Background())
+	} else {
+		cfg, err = config.LoadDefaultConfig(
+			context.Background(),
+			config.WithRegion(testRegion),
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+			),
+		)
+	}
 	if err != nil {
 		return false, fmt.Errorf("load aws config: %w", err)
 	}
 	s.s3Client = s3.NewFromConfig(
 		cfg,
 		func(options *s3.Options) {
-			options.BaseEndpoint = &s.endpoint
-			options.UsePathStyle = true
+			if s.endpoint != noEndpoint {
+				options.BaseEndpoint = &s.endpoint
+				options.UsePathStyle = true
+			}
 		},
 		s3lister.WithoutChecksumWarnings,
 	)
@@ -191,8 +204,4 @@ func (s *S3Test) Env() string {
 
 func (s *S3Test) Client() *s3.Client {
 	return s.s3Client
-}
-
-func (s *S3Test) Endpoint() string {
-	return s.endpoint
 }

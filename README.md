@@ -777,8 +777,8 @@ also detected as a conflict.
 
 # Other Notes
 
-Use [Minio](https://min.io) for testing or to create a local S3 API-compatible storage area for a
-local repository.
+Use [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for testing or to create a local S3
+API-compatible storage area for a local repository. See also [Testing](#testing)
 
 For `push` and `pull`, all prompts are structured so that `y` is the safe answer. That helps protect
 against muscle-memory `y` responses to abnormal situations such as conflicts.
@@ -792,6 +792,23 @@ to revert local changes that haven't been pushed.
 The `push` operation modifies an in-memory copy of the repository's database and pushes that back,
 which means that we can keep the repository database up-to-date with the changes we made without
 having to rescan the repository.
+
+# Testing
+
+Use `./test_all`.
+
+You can run
+```sh
+eval $(./bin/start-test-s3)
+```
+to start a test S3 server. The presence of `AWS_ENDPOINT_URL` in the environment will force the test
+suite to use it.
+
+You can also run tests with a "real" s3 or any other S3 backend that is set in your environment. To
+do so, set the environment variable `QFS_TEST_REAL_S3`. This will create a bucket whose name starts
+with `qfs-test-repo-`, which you will have to manually empty and delete at the end. The bucket will
+be deleted if tests passed and kept otherwise. If `QFS_TEST_KEEP_BUCKET` is set, then the bucket
+will retained even if tests pass.
 
 # Comparison with qsync
 
