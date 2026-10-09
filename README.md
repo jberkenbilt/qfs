@@ -2,8 +2,33 @@
 
 Last full review: 2024-06-10
 
-*NOTE*: as of 0.2.2, there are known limitations with some file-system-backed S3 API-compatible
-backends because of qfs's key naming conventions. See [Known Issues](#known-issues) for details.
+# TODO: resolve before 0.3
+
+Versions of qfs prior to 0.3.0 would not work properly with SeaweedFS or any other S3-compatible
+backends that store S3 objects as files whose names are based closely on the keys. If a symlink
+target contained `/../` in its path, SeaweedFS would reject the key, even though this is valid as an
+S3 object key. (As it happens, qfs wouldn't work with any S3-compatible backend that required
+path-based access anyway, so no one would have been using qfs this way.) Starting with qfs version
+0.3.0, symlink targets are URL-quoted, and the new type `k` is used in the S3 key. The database
+format remains the same, and the old `l` representation in S3 is still valid. qfs 0.3.0 and later
+can read the old formation but will no longer write it. Note that `pull` uses the database, not the
+files in S3.
+
+What this means:
+* qfs ≥ 0.3.0 will always succeed in pulling such symlinks from qfs < 0.3.0
+* qfs < 0.3.0 will always succeed in pulling such symlinks from qfs ≥ 0.3.0
+* If you run `qfs init-repo` with qfs < 0.3.0 and select the option to rebuild the database on a
+  repository that contains links with `/` in their targets that were pushed with qfs ≥ 0.3.0, the
+  older qfs will ignore those keys, and they will disappear from the repo database and be removed
+  locally by subsequent pulls. The fix is to run `qfs init-repo` again with qfs ≥ 0.3.0. **NOTE:**
+  Using the `--clean-repo` flag with `init-repo` with an older qfs could result in data loss.
+* When deleting a symlink, qfs ≥ deletes both encodings in `Remove` and `RemoveBatch`.
+
+Before qfs 1.0, we should have some mechanism to store the minimum required qfs version that's safe
+to use with a repository. Bumping the repo db version and including a minimum qfs version in the DB
+would most mitigate it.
+
+# Overview
 
 `qfs` is a tool that allows creation of flat data files that encapsulate the state of a directory in
 the local file system. The state includes the output of _lstat_ on the directory and all its
@@ -92,13 +117,6 @@ telling you what changed.
   * Without implicit descendant inclusion, this would cause removal of directories that contain
     included files but are not themselves included.
 * At present, pulling contents into read-only directories will not work.
-* Some S3-compatible servers store keys on the file system, which may cause the following problems
-  (see below for a proposed fix):
-  * If a symbolic link target contains `/../`, this may be rejected. Other patterns, like `//` can
-    cause problems.
-  * Too many characters between `/` characters may cause problems
-  * Link targets may may create keys such that `prefix` and `prefix/extra` are both present, which
-    would make some backends try to create `prefix` as both a file and a directory.
 
 ## Planned Non-compatible Change
 

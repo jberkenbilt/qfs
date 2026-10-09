@@ -2,7 +2,6 @@
 package qfs
 
 import (
-	"maps"
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -18,6 +17,7 @@ import (
 	"github.com/jberkenbilt/qfs/scan"
 	"github.com/jberkenbilt/qfs/sync"
 	"github.com/spf13/cobra"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,7 +61,7 @@ type parser struct {
 // the option's entry is called. Otherwise, the `""` entry is called for
 // positional options.
 
-const Version = "0.2.2"
+const Version = "0.3.0"
 
 type argHandler struct {
 	fn   func(*parser, *cobra.Command, string, string)

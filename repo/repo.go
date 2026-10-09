@@ -239,7 +239,7 @@ func (r *Repo) migrateRepo() error {
 		if info.ModTime.Before(updateTime) {
 			// aws s3 sync would consider this file to be up-to-date since its modification
 			// time is older than the S3 update time.
-			newKey := r.src.KeyFromPath(path, info)
+			newKey := r.src.KeyFromPath(path, info, false)
 			toCopy[key] = newKey
 		}
 	}
