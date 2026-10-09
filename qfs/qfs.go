@@ -2,7 +2,6 @@
 package qfs
 
 import (
-	"maps"
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -18,6 +17,7 @@ import (
 	"github.com/jberkenbilt/qfs/scan"
 	"github.com/jberkenbilt/qfs/sync"
 	"github.com/spf13/cobra"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,7 +61,7 @@ type parser struct {
 // the option's entry is called. Otherwise, the `""` entry is called for
 // positional options.
 
-const Version = "0.2.2"
+const Version = "0.3.0"
 
 type argHandler struct {
 	fn   func(*parser, *cobra.Command, string, string)
@@ -603,8 +603,14 @@ specified filters. scan-input may be one of
 
 * directory - a local directory
 * db - path to local qfs database
+* s3://bucket/prefix - S3 location
 * repo - the repository indicated by .qfs/repo
 * repo:$site - the repository copy of the database for site $site
+
+As a special case, scanning an S3 location just enumerates all keys in
+the location (latest versions only) and returns them in a
+non-deterministic ordering. This uses qfs's concurrent enumeration and
+is much faster than aws s3 ls.
 
 If -db is given, the result is written to the specified database.
 Otherwise, output is written to standard output.

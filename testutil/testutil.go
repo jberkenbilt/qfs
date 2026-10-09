@@ -12,10 +12,13 @@ import (
 	"testing"
 )
 
-func ToLines(out []byte) []string {
+func ToLines(out []byte, filter func(string) string) []string {
 	var lines []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if line != "" {
+			if filter != nil {
+				line = filter(line)
+			}
 			lines = append(lines, line)
 		}
 	}
@@ -37,14 +40,7 @@ func checkLinesInternal(t *testing.T, sorted bool, filter func(string) string, c
 	if len(stderr) > 0 {
 		t.Errorf("stderr: %s", stderr)
 	}
-	lines := ToLines(stdout)
-	if filter != nil {
-		var t []string
-		for _, line := range lines {
-			t = append(t, filter(line))
-		}
-		lines = t
-	}
+	lines := ToLines(stdout, filter)
 	if sorted {
 		sort.Strings(lines)
 		sort.Strings(expLines)

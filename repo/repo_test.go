@@ -200,6 +200,7 @@ func TestS3Source(t *testing.T) {
 		"file1",
 		"file2",
 		"file3",
+		"file4",
 	} {
 		err = src.Store(j("files/"+f), f)
 		if err != nil {
@@ -407,6 +408,7 @@ func TestS3Source(t *testing.T) {
 			"home/dir1/salad",
 			"home/file2",
 			"home/file3",
+			"home/file4",
 			"home/repo-db",
 		},
 	)
@@ -420,10 +422,25 @@ func TestKeyLogic(t *testing.T) {
 	for _, k := range []string{
 		".@d,1715443064999,0755",
 		".@d,1715443064888,0555",
+		".@d,1715443064888,0555",
 		".@.@f,1715443064888,0775",
 		"potato-salad",
 		"potato/.@f,1715443000777,0644",
 		"potato/a@@b@l,1715443000777,target@@here",
+		"potato/a@@b2@k,1715443000777,target%40here",
+		// Version 0.3.0 started URI-quoting link targets to
+		// accommodate `/../` in a target, which is rejected by some
+		// S3 API-compatible clients that store keys in the file
+		// system.
+		"potato/c@@d@k,1715443000888,..%2F..%2Ftarget+%2b%20%40there",
+		// Old-style symlink targets are still accepted. Older can't
+		// read newer, but newer can read older.
+		"potato/e@@f@l,1715443000889,uses/unquoted/slash",
+		// Links with older versions using both old and new formats
+		"potato/f@l,1715443000889,old-link-format",
+		"potato/f@l,1715443000887,old-link-format",
+		"potato/g@k,1715443000889,old-link-format",
+		"potato/g@k,1715443000887,old-link-format",
 	} {
 		input.Key = &k
 		_, err := s3Client.PutObject(ctx, input)
@@ -438,9 +455,13 @@ func TestKeyLogic(t *testing.T) {
 	db, err := src.Database(false, false, nil)
 	testutil.Check(t, err)
 	expExtra := []string{
-		".@d,1715443064888,0555",   // older
-		".@.@f,1715443064888,0775", // invalid name
-		"potato-salad",             // invalid name
+		".@d,1715443064888,0555",                   // older
+		".@.@f,1715443064888,0775",                 // invalid name
+		"potato-salad",                             // invalid name
+		"potato/f@l,1715443000887,old-link-format", // older
+		"potato/f@k,1715443000887,old-link-format", // older -- other link format
+		"potato/g@l,1715443000887,old-link-format", // older -- other link format
+		"potato/g@k,1715443000887,old-link-format", // older
 	}
 	expDb := database.Database{
 		".": {
@@ -458,6 +479,36 @@ func TestKeyLogic(t *testing.T) {
 			ModTime:     time.UnixMilli(1715443000777),
 			Permissions: 0o777,
 			Special:     "target@here",
+		},
+		"potato/a@b2": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000777),
+			Permissions: 0o777,
+			Special:     "target@here",
+		},
+		"potato/c@d": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000888),
+			Permissions: 0o777,
+			Special:     "../../target + @there",
+		},
+		"potato/e@f": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000889),
+			Permissions: 0o777,
+			Special:     "uses/unquoted/slash",
+		},
+		"potato/f": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000889),
+			Permissions: 0o777,
+			Special:     "old-link-format",
+		},
+		"potato/g": {
+			FileType:    fileinfo.TypeLink,
+			ModTime:     time.UnixMilli(1715443000889),
+			Permissions: 0o777,
+			Special:     "old-link-format",
 		},
 	}
 	sort.Strings(expExtra)
@@ -2516,4 +2567,161 @@ prompt: Continue?
 		"removing dir2/will-be-reverted",
 		"updated repository copy of site database to reflect changes",
 	})
+}
+
+func stripTimestamp(s string) string {
+	var re = regexp.MustCompile(`^.*,(\d+),[^,]+$`)
+	m := re.FindStringSubmatchIndex(s)
+	if m == nil {
+		return s
+	}
+	return s[:m[2]] + "..." + s[m[3]:]
+}
+
+func TestSymlinkFormat(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+		misc.TestMessageChannel = nil
+	}()
+	misc.TestPromptChannel = make(chan string, 5)
+	cleanupMessages, checkMessages := testutil.CaptureMessages()
+	defer cleanupMessages()
+	qfs.S3Client = s3Client
+	defer func() { qfs.S3Client = nil }()
+	setUpTestBucket()
+	tmp := t.TempDir()
+	j := func(path string) string { return filepath.Join(tmp, path) }
+
+	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0o777))
+	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+testBucket+"/links")
+	err := qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
+	if err != nil {
+		t.Errorf("init: %v", err)
+	}
+	checkMessages(t, []string{"uploading repository database"})
+
+	// Set up for qfs
+	start := time.Now().Add(-24 * time.Hour).UnixMilli()
+	writeFile(t, j("site1/.qfs/site"), start, 0o644, "site1\n")
+	writeFile(t, j("site1/.qfs/filters/repo"), start, 0o644, `
+:include:
+.
+`)
+	writeFile(t, j("site1/.qfs/filters/site1"), start, 0o644, `
+:include:
+.
+`)
+
+	// Create a symlink and push. For use of the old format.
+	s3source.TestUseOldLinkFormat = true
+	testutil.Check(t, os.Symlink("one/two", j("site1/link1")))
+	testutil.Check(t, os.Symlink("three@four", j("site1/link2")))
+	testutil.Check(t, os.Symlink("five%six", j("site1/link3")))
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`mkdir .
+mkdir .qfs
+add .qfs/filters/repo
+add .qfs/filters/site1
+add link1
+add link2
+add link3
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages(t, []string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+		"storing .",
+		"storing .qfs",
+		"storing .qfs/filters/repo",
+		"storing .qfs/filters/site1",
+		"storing link1",
+		"storing link2",
+		"storing link3",
+		"uploading repository database",
+		"uploading site database",
+	})
+
+	// Turn off old format for remaining tests
+	s3source.TestUseOldLinkFormat = false
+
+	// Make sure we stored the old link format
+	testutil.CheckLinesSorted(
+		t,
+		stripTimestamp,
+		[]string{"qfs", "scan", "s3://" + testBucket + "/links"},
+		[]string{
+			"links/.@d,...,0755",
+			"links/.qfs/db/repo@f,...,0644",
+			"links/.qfs/db/site1@f,...,0644",
+			"links/.qfs/filters/repo@f,...,0644",
+			"links/.qfs/filters/site1@f,...,0644",
+			"links/.qfs@d,...,0755",
+			"links/link1@l,...,one/two",
+			"links/link2@l,...,three@@four",
+			"links/link3@l,...,five%six",
+		},
+	)
+
+	// Change and remove links. Cover links that were untouched,
+	// deleted, and changed.
+	testutil.Check(t, os.Remove(j("site1/link1")))
+	testutil.Check(t, os.Remove(j("site1/link2")))
+	testutil.Check(t, os.Symlink("7@8%9/../10", j("site1/link2")))
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "y" // Continue?
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err != nil {
+				t.Errorf("%v", err)
+			}
+		},
+		`rm link1
+change link2
+prompt: Continue?
+`,
+		"",
+	)
+	checkMessages(t, []string{
+		"generating local database",
+		"local copy of repository database is current",
+		"no conflicts found",
+		"----- changes to push -----",
+		// diff is written to stdout
+		"-----",
+		"removing link1",
+		"storing link2",
+		"uploading repository database",
+		"uploading site database",
+	})
+	testutil.CheckLinesSorted(
+		t,
+		stripTimestamp,
+		[]string{"qfs", "scan", "s3://" + testBucket + "/links"},
+		[]string{
+			"links/.@d,...,0755",
+			"links/.qfs/db/repo@f,...,0644",
+			"links/.qfs/db/site1@f,...,0644",
+			"links/.qfs/filters/repo@f,...,0644",
+			"links/.qfs/filters/site1@f,...,0644",
+			"links/.qfs@d,...,0755",
+			"links/link2@k,...,7%408%259%2F..%2F10",
+			"links/link3@l,...,five%six",
+		},
+	)
 }

@@ -20,6 +20,7 @@ const (
 	TypeFile      FileType = 'f'
 	TypeDirectory FileType = 'd'
 	TypeLink      FileType = 'l'
+	TypeS3Link    FileType = 'k'
 	TypeCharDev   FileType = 'c'
 	TypeBlockDev  FileType = 'b'
 	TypePipe      FileType = 'p'

@@ -16,6 +16,7 @@ import (
 	"github.com/jberkenbilt/qfs/s3lister"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,12 +26,14 @@ import (
 	"time"
 )
 
+var TestUseOldLinkFormat = false
+
 // DeleteBatchSize is the number of items we delete from S3 at once. It is set to
 // the maximum value supported by S3 and is a variable that is overridden from
 // the test suite to exercise the batching logic.
 var DeleteBatchSize = 1000
 
-var pathRe = regexp.MustCompile(`^((?:[^@]|@@)+)@([fdl]),(\d+),((?:[^@]|@@)+)$`)
+var pathRe = regexp.MustCompile(`^((?:[^@]|@@)+)@([fdlk]),(\d+),((?:[^@]|@@)+)$`)
 var permRe = regexp.MustCompile(`^[0-7]{4}$`)
 var ctx = context.Background()
 
@@ -111,13 +114,22 @@ func (s *S3Source) KeyToFileInfo(key string, size int64) *fileinfo.FileInfo {
 	rest := m[4]
 	var special string
 	var permissions int64
-	if fType == fileinfo.TypeDirectory || fType == fileinfo.TypeFile {
+	switch fType {
+	case fileinfo.TypeDirectory, fileinfo.TypeFile:
 		if !permRe.MatchString(rest) {
 			// Invalid permissions
 			return nil
 		}
 		permissions, _ = strconv.ParseInt(rest, 8, 16)
-	} else {
+	case fileinfo.TypeS3Link:
+		fType = fileinfo.TypeLink
+		permissions = 0o777
+		special, err = url.QueryUnescape(rest)
+		if err != nil {
+			// Should not be possible. Just keep original version
+			special = rest
+		}
+	default:
 		special = strings.ReplaceAll(rest, "@@", "@")
 		permissions = 0o777
 	}
@@ -147,7 +159,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	if dbEntry != nil {
 		return dbEntry, nil
 	}
-	prefix := s.KeyFromPath(path, nil)
+	prefix := s.KeyFromPath(path, nil, false)
 	listInput := &s3.ListObjectsV2Input{
 		Bucket: &s.bucket,
 		Prefix: &prefix,
@@ -185,7 +197,7 @@ func (s *S3Source) FileInfo(path string) (*fileinfo.FileInfo, error) {
 	return fi, nil
 }
 
-func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo) string {
+func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo, oldLinkFormat bool) string {
 	key := s.prefix
 	if key != "" {
 		key += "/"
@@ -193,12 +205,18 @@ func (s *S3Source) KeyFromPath(path string, fi *fileinfo.FileInfo) string {
 	key += strings.ReplaceAll(path, "@", "@@") + "@"
 	if fi != nil {
 		var rest string
+		fileType := fi.FileType
 		if fi.FileType == fileinfo.TypeLink {
-			rest = strings.ReplaceAll(fi.Special, "@", "@@")
+			if oldLinkFormat || TestUseOldLinkFormat {
+				rest = strings.ReplaceAll(fi.Special, "@", "@@")
+			} else {
+				fileType = fileinfo.TypeS3Link
+				rest = url.QueryEscape(fi.Special)
+			}
 		} else {
 			rest = fmt.Sprintf("%04o", fi.Permissions)
 		}
-		key += fmt.Sprintf("%c,%d,%s", fi.FileType, fi.ModTime.UnixMilli(), rest)
+		key += fmt.Sprintf("%c,%d,%s", fileType, fi.ModTime.UnixMilli(), rest)
 	}
 	return key
 }
@@ -208,7 +226,7 @@ func (s *S3Source) Open(path string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	key := s.KeyFromPath(path, info)
+	key := s.KeyFromPath(path, info, false)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -226,15 +244,25 @@ func (s *S3Source) Remove(path string) error {
 		// Make Remove idempotent
 		return nil
 	}
-	key := s.KeyFromPath(path, info)
-	input := &s3.DeleteObjectInput{
-		Bucket: &s.bucket,
-		Key:    &key,
+	var deleteErrors []error
+	linkFormats := []bool{false}
+	if info.FileType == fileinfo.TypeLink {
+		linkFormats = append(linkFormats, true)
 	}
-	_, err = s.s3Client.DeleteObject(ctx, input)
-	if err != nil {
-		// TEST: NOT COVERED. DeleteObject is idempotent.
-		return fmt.Errorf("delete object s3://%s/%s: %w", s.bucket, key, err)
+	for _, oldLinkFormat := range linkFormats {
+		key := s.KeyFromPath(path, info, oldLinkFormat)
+		input := &s3.DeleteObjectInput{
+			Bucket: &s.bucket,
+			Key:    &key,
+		}
+		_, err = s.s3Client.DeleteObject(ctx, input)
+		if err != nil {
+			// TEST: NOT COVERED. DeleteObject is idempotent.
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete object s3://%s/%s: %w", s.bucket, key, err))
+		}
+	}
+	if len(deleteErrors) > 0 {
+		return errors.Join(deleteErrors...)
 	}
 	if s.db != nil {
 		s.withDbLock(func() {
@@ -279,7 +307,10 @@ func (s *S3Source) RemoveBatch(toDelete []*fileinfo.FileInfo) error {
 	var keys []string
 	for _, fi := range toDelete {
 		misc.Message("removing %s", fi.Path)
-		keys = append(keys, s.KeyFromPath(fi.Path, fi))
+		keys = append(keys, s.KeyFromPath(fi.Path, fi, false))
+		if fi.FileType == fileinfo.TypeLink {
+			keys = append(keys, s.KeyFromPath(fi.Path, fi, true))
+		}
 	}
 	err := s.RemoveKeys(keys)
 	if err != nil {
@@ -307,7 +338,7 @@ func (s *S3Source) Store(localPath *fileinfo.Path, repoPath string) error {
 	if err != nil {
 		return err
 	}
-	key := s.KeyFromPath(repoPath, info)
+	key := s.KeyFromPath(repoPath, info, false)
 	var body io.Reader
 	switch info.FileType {
 	case fileinfo.TypeFile:
@@ -361,7 +392,7 @@ func (s *S3Source) DownloadVersion(
 }
 
 func (s *S3Source) Download(repoPath string, srcInfo *fileinfo.FileInfo, f *os.File) error {
-	key := s.KeyFromPath(repoPath, srcInfo)
+	key := s.KeyFromPath(repoPath, srcInfo, false)
 	input := &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -432,18 +463,24 @@ func (s *S3Source) dbHandleObject(
 				// This is a newer match for the same path, so keep it in favor of the one. This
 				// should never actually happen, but it could happen if we stored a new key
 				// without deleting an old one.
-				s.extraKeys[s.KeyFromPath(fi.Path, existing)] = existing.ModTime
+				s.extraKeys[s.KeyFromPath(fi.Path, existing, false)] = existing.ModTime
+				if fi.FileType == fileinfo.TypeLink {
+					// We don't actually store whether the original key was created from an old or
+					// new format symlink marker, so store both as extra keys. Only one should
+					// exist, but neither would be valid, so delete both.
+					s.extraKeys[s.KeyFromPath(fi.Path, existing, true)] = existing.ModTime
+				}
 				s.db[fi.Path] = fi
 			} else {
 				// This is an older version than the one we already saw.
-				s.extraKeys[s.KeyFromPath(fi.Path, fi)] = fi.ModTime
+				s.extraKeys[*object.Key] = fi.ModTime
 			}
 		} else {
 			included, _ := filter.IsIncluded(fi.Path, repoRules, filters...)
 			if included {
 				s.db[fi.Path] = fi
 			} else if !strings.HasPrefix(fi.Path, repofiles.Top+"/") {
-				s.extraKeys[s.KeyFromPath(fi.Path, fi)] = fi.ModTime
+				s.extraKeys[*object.Key] = fi.ModTime
 			}
 		}
 	})
