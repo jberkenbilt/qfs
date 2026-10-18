@@ -202,7 +202,7 @@ func (r *Repo) localPath(relPath string) *fileinfo.Path {
 
 func (r *Repo) cleanRepo() error {
 	var extraKeys []string
-	for k := range maps.Keys(r.src.ExtraKeys()) {
+	for k := range r.src.ExtraKeys() {
 		extraKeys = append(extraKeys, k)
 	}
 	sort.Strings(extraKeys)
@@ -249,7 +249,7 @@ func (r *Repo) migrateRepo() error {
 		return nil
 	}
 	var oldKeys []string
-	for k := range maps.Keys(toCopy) {
+	for k := range toCopy {
 		oldKeys = append(oldKeys, k)
 	}
 	sort.Strings(oldKeys)
@@ -1079,7 +1079,7 @@ func (r *Repo) ListVersions(path string, config *ListVersionsConfig) error {
 		return err
 	}
 	var fileNames []string
-	for k := range maps.Keys(files) {
+	for k := range files {
 		fileNames = append(fileNames, k)
 	}
 	sort.Strings(fileNames)
