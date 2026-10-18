@@ -446,7 +446,8 @@ func (s *S3Source) dbHandleObject(
 	repoRules bool,
 	filters []*filter.Filter,
 ) {
-	if *object.Key == filepath.Join(s.prefix, repofiles.Busy) {
+	if *object.Key == filepath.Join(s.prefix, repofiles.Busy) ||
+		*object.Key == filepath.Join(s.prefix, repofiles.Version) {
 		return
 	}
 	fi := s.KeyToFileInfo(*object.Key, *object.Size)

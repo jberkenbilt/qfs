@@ -460,6 +460,7 @@ func (p *parser) doInitRepo() error {
 	r, err := repo.New(
 		repo.WithLocalTop(p.top),
 		repo.WithS3Client(S3Client),
+		repo.WithSilentMinVersion(),
 	)
 	if err != nil {
 		return err

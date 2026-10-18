@@ -20,31 +20,39 @@ import (
 	"github.com/jberkenbilt/qfs/s3source"
 	"github.com/jberkenbilt/qfs/sync"
 	"github.com/jberkenbilt/qfs/traverse"
+	"io"
 	"io/fs"
-	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const ScanPrefix = "repo:"
 
+// This is the minimum QFS version that can safely work with the
+// repository. Bump this to the to-be-released software version if you
+// make a change to the in-storage representation that could be
+// dangerous for an old client.
+const QfsMinVersion = "0.3.0"
+
 type Options func(*Repo)
 
 type Repo struct {
-	localTop         string
-	bucket           string
-	prefix           string
-	s3Client         *s3.Client
-	initialized      bool
-	src              *s3source.S3Source
-	repoDb           database.Database
-	downloadedRepoDb bool
+	localTop                string
+	bucket                  string
+	prefix                  string
+	s3Client                *s3.Client
+	silentInitialMinVersion bool
+	initialized             bool
+	src                     *s3source.S3Source
+	repoDb                  database.Database
+	downloadedRepoDb        bool
 }
 
 type PushConfig struct {
@@ -131,6 +139,9 @@ func New(options ...Options) (*Repo, error) {
 		r.s3Client = s3.NewFromConfig(
 			cfg, s3lister.WithoutChecksumWarnings, s3lister.WithPathStyleForCustomEndpoint)
 	}
+	if err = r.checkQfsVersion(); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -140,11 +151,114 @@ func WithLocalTop(path string) func(r *Repo) {
 	}
 }
 
+func WithSilentMinVersion() func(r *Repo) {
+	return func(r *Repo) {
+		r.silentInitialMinVersion = true
+	}
+}
+
 // WithS3Client sets the s3 client to use. If nil, the default client will be used.
 func WithS3Client(s3Client *s3.Client) func(r *Repo) {
 	return func(r *Repo) {
 		r.s3Client = s3Client
 	}
+}
+
+var versionRe = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)$`)
+
+func parseVersion(v string) ([]int, error) {
+	const versionError = "bad version: %q; must be x.y.z with no newline or space"
+	m := versionRe.FindStringSubmatch(v)
+	if m == nil {
+		return nil, fmt.Errorf(versionError, v)
+	}
+	result := make([]int, 3)
+	for i := range result {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return nil, fmt.Errorf(versionError, v)
+		}
+		result[i] = n
+	}
+	return result, nil
+}
+
+func (r *Repo) checkQfsVersion() error {
+	getInput := &s3.GetObjectInput{
+		Bucket: &r.bucket,
+		Key:    aws.String(filepath.Join(r.prefix, repofiles.Version)),
+	}
+	// Fall back to 0.1.0 if no version file is found since the
+	// version check feature wasn't added until the first breaking
+	// change.
+	repoVersion := "0.1.0"
+	output, err := r.s3Client.GetObject(ctx, getInput)
+	missing := false
+	if err != nil {
+		var noSuchKey *types.NoSuchKey
+		if !errors.As(err, &noSuchKey) {
+			return fmt.Errorf(
+				"error reading \"%v\" from repo: %w",
+				repofiles.Version,
+				err,
+			)
+		}
+		missing = true
+	} else {
+		defer func() { _ = output.Body.Close() }()
+		data, err := io.ReadAll(output.Body)
+		if err != nil {
+			return err
+		}
+		repoVersion = string(data)
+	}
+	inRepo, err := parseVersion(repoVersion)
+	if err != nil {
+		return err
+	}
+	inSoftware, err := parseVersion(QfsMinVersion)
+	if err != nil {
+		panic("QfsMinVersion constant doesn't parse")
+	}
+	switch slices.Compare(inRepo, inSoftware) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf(
+			"this repository requires qfs version ≥ %v; upgrade your qfs",
+			repoVersion,
+		)
+	}
+	if !(missing && r.silentInitialMinVersion) {
+		fmt.Printf(`
+This version of qfs writes the repository in a way that requires a qfs
+version ≥ %v. If you allow qfs to update the minimum required version,
+you must upgrade all your qfs installations.
+`,
+			QfsMinVersion)
+		if missing {
+			fmt.Printf(`
+qfs versions < 0.3.0 do not check on startup. Running push and pull
+are still safe, but it is not safe to run init-repo with --clean-repo
+or to rebuild the repo database with qfs version < 0.3.0 once you have
+upgraded to ≥ 0.3.0, so you must ensure that you upgrade all your qfs
+installations to a version ≥ %v.
+`,
+				QfsMinVersion,
+			)
+		}
+		fmt.Printf("\n")
+		if !misc.Prompt(fmt.Sprintf("Set minimum version to %v?", QfsMinVersion)) {
+			return errors.New("not modifying version constraint in repo")
+		}
+	}
+	putInput := &s3.PutObjectInput{
+		Bucket: &r.bucket,
+		Key:    aws.String(filepath.Join(r.prefix, repofiles.Version)),
+		Body:   strings.NewReader(QfsMinVersion),
+	}
+	_, err = r.s3Client.PutObject(ctx, putInput)
+	return err
 }
 
 func (r *Repo) createBusy() error {

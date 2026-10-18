@@ -5,20 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/jberkenbilt/qfs/database"
-	"github.com/jberkenbilt/qfs/fileinfo"
-	"github.com/jberkenbilt/qfs/gztar"
-	"github.com/jberkenbilt/qfs/localsource"
-	"github.com/jberkenbilt/qfs/misc"
-	"github.com/jberkenbilt/qfs/qfs"
-	"github.com/jberkenbilt/qfs/repo"
-	"github.com/jberkenbilt/qfs/repofiles"
-	"github.com/jberkenbilt/qfs/s3source"
-	"github.com/jberkenbilt/qfs/s3test"
-	"github.com/jberkenbilt/qfs/testutil"
 	"io"
 	"io/fs"
 	"os"
@@ -30,6 +16,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	"github.com/jberkenbilt/qfs/database"
+	"github.com/jberkenbilt/qfs/fileinfo"
+	"github.com/jberkenbilt/qfs/gztar"
+	"github.com/jberkenbilt/qfs/localsource"
+	"github.com/jberkenbilt/qfs/misc"
+	"github.com/jberkenbilt/qfs/qfs"
+	"github.com/jberkenbilt/qfs/repo"
+	"github.com/jberkenbilt/qfs/repofiles"
+	"github.com/jberkenbilt/qfs/s3source"
+	"github.com/jberkenbilt/qfs/s3test"
+	"github.com/jberkenbilt/qfs/testutil"
 )
 
 var testBucket = func() string {
@@ -549,17 +551,13 @@ func TestRepo_IsInitialized(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), ".qfs/repo") {
 		t.Errorf("wrong error: %v", err)
 	}
-	r, err := repo.New(
+	_, err = repo.New(
 		repo.WithLocalTop("testdata/files1"),
 		repo.WithS3Client(s3Client),
 	)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	err = r.Init(repo.InitCleanRepo)
-	var nsb *types.NoSuchBucket
-	if err == nil || !errors.As(err, &nsb) {
-		t.Errorf("wrong error: %v", err)
+	var apiErr smithy.APIError
+	if err == nil || !errors.As(err, &apiErr) || apiErr.ErrorCode() != "NoSuchBucket" {
+		t.Errorf("wrong error: %#v", err)
 	}
 }
 
@@ -2669,6 +2667,7 @@ prompt: Continue?
 			"links/.qfs/db/site1@f,...,0644",
 			"links/.qfs/filters/repo@f,...,0644",
 			"links/.qfs/filters/site1@f,...,0644",
+			"links/.qfs/min-version",
 			"links/.qfs@d,...,0755",
 			"links/link1@l,...,one/two",
 			"links/link2@l,...,three@@four",
@@ -2719,9 +2718,185 @@ prompt: Continue?
 			"links/.qfs/db/site1@f,...,0644",
 			"links/.qfs/filters/repo@f,...,0644",
 			"links/.qfs/filters/site1@f,...,0644",
+			"links/.qfs/min-version",
 			"links/.qfs@d,...,0755",
 			"links/link2@k,...,7%408%259%2F..%2F10",
 			"links/link3@l,...,five%six",
 		},
 	)
+}
+
+func TestMinVersion(t *testing.T) {
+	defer func() {
+		misc.TestPromptChannel = nil
+		misc.TestMessageChannel = nil
+	}()
+	misc.TestPromptChannel = make(chan string, 5)
+	cleanupMessages, checkMessages := testutil.CaptureMessages()
+	defer cleanupMessages()
+	qfs.S3Client = s3Client
+	defer func() { qfs.S3Client = nil }()
+	setUpTestBucket()
+	tmp := t.TempDir()
+	j := func(path string) string { return filepath.Join(tmp, path) }
+
+	testutil.Check(t, os.MkdirAll(j("site1/"+repofiles.Top), 0o777))
+	writeFile(t, j("site1/"+repofiles.RepoConfig), time.Now().UnixMilli(), 0o644, "s3://"+testBucket+"/version")
+	err := qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
+	if err != nil {
+		t.Errorf("init: %v", err)
+	}
+	checkMessages(t, []string{"uploading repository database"})
+
+	// Set up for qfs
+	start := time.Now().Add(-24 * time.Hour).UnixMilli()
+	writeFile(t, j("site1/.qfs/site"), start, 0o644, "site1\n")
+	writeFile(t, j("site1/.qfs/filters/repo"), start, 0o644, `
+:include:
+.
+`)
+	writeFile(t, j("site1/.qfs/filters/site1"), start, 0o644, `
+:include:
+.
+`)
+
+	// Make sure we wrote a min-version object.
+	testutil.CheckLinesSorted(
+		t,
+		stripTimestamp,
+		[]string{"qfs", "scan", "s3://" + testBucket + "/version"},
+		[]string{
+			"version/.qfs/db/repo@f,...,0644",
+			"version/.qfs/min-version",
+		},
+	)
+
+	deleteInput := &s3.DeleteObjectInput{
+		Bucket: aws.String(testBucket),
+		Key:    aws.String("version/.qfs/min-version"),
+	}
+	_, err = s3Client.DeleteObject(ctx, deleteInput)
+	testutil.Check(t, err)
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "n" // Upgrade?
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "not modifying version constraint in repo") {
+				t.Errorf("%v", err)
+			}
+		},
+		`
+This version of qfs writes the repository in a way that requires a qfs
+version ≥ 0.3.0. If you allow qfs to update the minimum required version,
+you must upgrade all your qfs installations.
+
+qfs versions < 0.3.0 do not check on startup. Running push and pull
+are still safe, but it is not safe to run init-repo with --clean-repo
+or to rebuild the repo database with qfs version < 0.3.0 once you have
+upgraded to ≥ 0.3.0, so you must ensure that you upgrade all your qfs
+installations to a version ≥ 0.3.0.
+
+prompt: Set minimum version to 0.3.0?
+`,
+		"",
+	)
+	checkMessages(t, []string{})
+
+	putInput := &s3.PutObjectInput{
+		Bucket: aws.String(testBucket),
+		Key:    aws.String("version/.qfs/min-version"),
+		Body:   strings.NewReader("0.2.0"),
+	}
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "n" // Upgrade?
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "not modifying version constraint in repo") {
+				t.Errorf("%v", err)
+			}
+		},
+		`
+This version of qfs writes the repository in a way that requires a qfs
+version ≥ 0.3.0. If you allow qfs to update the minimum required version,
+you must upgrade all your qfs installations.
+
+prompt: Set minimum version to 0.3.0?
+`,
+		"",
+	)
+	checkMessages(t, []string{})
+
+	// Init silently creates min-version if missing but not if it's present.
+	testutil.ExpStdout(
+		t,
+		func() {
+			misc.TestPromptChannel <- "n" // Upgrade?
+			err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "not modifying version constraint in repo") {
+				t.Errorf("%v", err)
+			}
+		},
+		`
+This version of qfs writes the repository in a way that requires a qfs
+version ≥ 0.3.0. If you allow qfs to update the minimum required version,
+you must upgrade all your qfs installations.
+
+prompt: Set minimum version to 0.3.0?
+`,
+		"",
+	)
+	checkMessages(t, []string{})
+
+	putInput.Body = strings.NewReader("500.0.0")
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "this repository requires qfs version ≥ 500.0.0") {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{})
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.RunWithArgs([]string{"qfs", "init-repo", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "this repository requires qfs version ≥ 500.0.0") {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{})
+
+	putInput.Body = strings.NewReader("potato")
+	_, err = s3Client.PutObject(ctx, putInput)
+	testutil.Check(t, err)
+
+	testutil.ExpStdout(
+		t,
+		func() {
+			err = qfs.RunWithArgs([]string{"qfs", "push", "--top", j("site1")})
+			if err == nil || !strings.Contains(err.Error(), "must be x.y.z with no newline or space") {
+				t.Errorf("%v", err)
+			}
+		},
+		"",
+		"",
+	)
+	checkMessages(t, []string{})
 }

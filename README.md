@@ -2,22 +2,14 @@
 
 Last full review: 2024-06-10
 
-# Before qfs 1.0
-
-* We should have some mechanism to store the minimum required qfs version that's safe to use with a
-  repository. Bumping the repo db version and including a minimum qfs version in the DB would most
-  likely mitigate it, though it doesn't stop someone from using `init-db` with an older qfs.
-  Instead, create, in the repo, a key called `min-qfs-version`. qfs should write `0.3.0` (or
-  whatever the minimum version is relative to our last breaking change) if the file doesn't exist.
-  If the file does exist, it should be read and compared with the current version of qfs.
-
 # Changes to Symlink Storage in 0.3
 
 **NOTE**: It is not fully safe to use qfs < 0.3.0 on a repository containing symlinks that were
-written with a version ≥ 0.3.0. There are edge cases around `init-db` with database rebuild or
-cleanup that could result in data loss in the form of losing symlinks. These cases are not expected
-to happen under normal usage. You should upgrade all clients to 0.3.0 as soon as you start writing
-links in the new format.
+written with a version ≥ 0.3.0. Push and pull are safe, but there are edge cases around `init-db`
+with database rebuild or cleanup that could result in data loss in the form of losing symlinks.
+These cases are not expected to happen under normal usage, but you should upgrade all clients to
+0.3.0 as soon as you start writing links in the new format. From here on, qfs will check that the
+version is new enough, but versions prior to 0.3.3 contained no such check.
 
 Versions of qfs prior to 0.3.0 would not work properly with SeaweedFS or any other S3-compatible
 backends that store S3 objects as files whose names are based closely on the keys. If a symlink
@@ -27,7 +19,8 @@ work with any S3-compatible backend that required path-based access anyway, so n
 been using qfs this way.) Starting with qfs version 0.3.0, symlink targets are URL-quoted, and the
 new type `k` is used in the S3 key. The database format remains the same, and the old `l`
 representation in S3 is still valid. qfs 0.3.0 and later can read the old format but will no longer
-write it. Note that `pull` uses the database, not the files in S3.
+write it. Note that `pull` uses the database, not the files in S3, which is what makes push and pull
+safe.
 
 What this means:
 * qfs ≥ 0.3.0 will always succeed in pulling such symlinks from qfs < 0.3.0
@@ -36,8 +29,9 @@ What this means:
   repository that contains links that were pushed with qfs ≥ 0.3.0, the older qfs will ignore those
   keys, and they will disappear from the repo database and be removed locally by subsequent pulls.
   The fix is to run `qfs init-repo` again with qfs ≥ 0.3.0. **NOTE:** Using the `--clean-repo` flag
-  with `init-repo` with an older qfs could result in data loss.
-* When deleting a symlink, qfs ≥ 0.3.0 deletes both encodings in `Remove` and `RemoveBatch`.
+  with `init-repo` with an *older* qfs could result in data loss because repo files representing
+  symlinks written by a newer qfs would be deleted.
+* When deleting a symlink, qfs ≥ 0.3.0 deletes both encodings.
 
 # Overview
 

@@ -7,6 +7,7 @@ const (
 	RepoConfig = ".qfs/repo"
 	Site       = ".qfs/site"
 	Busy       = ".qfs/busy"
+	Version    = ".qfs/min-version"
 	Push       = ".qfs/push"
 	Pull       = ".qfs/pull"
 )

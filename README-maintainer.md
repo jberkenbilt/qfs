@@ -12,6 +12,10 @@ go get -u ./...
 go mod tidy
 ```
 
+# QfsMinVersion
+
+The file `repo.go` defines `QfsMinVersion` to the minimum version of qfs that's safe to use for a repository. If a specific version of qfs makes a change to the way keys are stored in the repository that make older versions of qfs unsafe to run, it should bump that to its own version.
+
 # Release
 
 Update version number in qfs/qfs.go
